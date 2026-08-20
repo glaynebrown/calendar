@@ -1,0 +1,8 @@
+{
+  "name": "family-calendar-reminders",
+  "private": true,
+  "description": "GitHub Actions cron script that sends due event reminders via Firebase Cloud Messaging. Not part of the deployed site -- runs only on GitHub's servers.",
+  "dependencies": {
+    "firebase-admin": "^12.0.0"
+  }
+}

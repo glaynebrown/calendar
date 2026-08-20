@@ -1,0 +1,95 @@
+rules_version = '2';
+
+// Paste this into Firebase Console -> Firestore Database -> Rules.
+//
+// "Connected" is checked via a deterministic doc id in `connections`
+// (see connectionDocId() in store.js: [a, b] sorted and joined with '_'),
+// so "is A connected to B" is a single O(1) existence lookup rather than a
+// query -- that's what makes the events read/write rules below affordable.
+
+function isSignedIn() {
+  return request.auth != null;
+}
+
+function connectionId(a, b) {
+  return a < b ? a + '_' + b : b + '_' + a;
+}
+
+function isConnectedTo(otherId) {
+  return isSignedIn() && exists(/databases/$(database)/documents/connections/$(connectionId(request.auth.uid, otherId)));
+}
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Any signed-in user can read any profile (names/colors need to be
+    // visible to connections) -- only the owner can write their own.
+    match /accounts/{uid} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn() && request.auth.uid == uid;
+    }
+
+    // Doc id is the deterministic connectionId(a, b) -- either side can
+    // create or delete (matches addConnection/removeConnection being
+    // unilateral in store.js), only if they're actually one of the two.
+    match /connections/{id} {
+      allow read: if isSignedIn() && (request.auth.uid == resource.data.a || request.auth.uid == resource.data.b);
+      allow create: if isSignedIn()
+        && (request.auth.uid == request.resource.data.a || request.auth.uid == request.resource.data.b)
+        && id == connectionId(request.resource.data.a, request.resource.data.b);
+      allow delete: if isSignedIn() && (request.auth.uid == resource.data.a || request.auth.uid == resource.data.b);
+    }
+
+    // Readable by anyone signed in (an invite preview needs to show a
+    // household's name before the reader is a member); writable only by
+    // existing members (new members are added via acceptInvite).
+    match /households/{id} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.auth.uid in request.resource.data.memberIds;
+      allow update: if isSignedIn() && request.auth.uid in resource.data.memberIds;
+    }
+
+    // Readable by anyone signed in (resolving a code happens before the
+    // reader has any other relationship to the invite). Writable by the
+    // invite's owner, or by any current member for a household-owned invite.
+    match /invites/{code} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.auth.uid == request.resource.data.ownerId;
+      allow update: if isSignedIn() && request.auth.uid == resource.data.ownerId;
+    }
+
+    // Read: gated by the denormalized `visibleTo` array (every uid allowed
+    // to see the event -- computed client-side in store.js's
+    // computeVisibleTo() from ownerId/visibility/customPeople whenever an
+    // event is written). This is *not* just a modeling choice -- Firestore
+    // can only validate a live collection query (as opposed to a single-doc
+    // get) against a rule it can prove from the query itself, and the app's
+    // calendar view is exactly that kind of live query
+    // (.where('visibleTo', 'array-contains', uid)), so a compound rule
+    // referencing visibility/customPeople directly would reject the query
+    // outright rather than filtering it.
+    // Write: the requester must be the event's owner, or connected to them
+    // (matches the "author an event as someone you know" feature) -- this
+    // part IS a single-doc check, so it can use the richer isConnectedTo()
+    // logic without the list-query restriction above applying.
+    match /events/{id} {
+      allow read: if isSignedIn() && request.auth.uid in resource.data.visibleTo;
+      allow create: if isSignedIn() && (
+        request.auth.uid == request.resource.data.ownerId || isConnectedTo(request.resource.data.ownerId)
+      );
+      allow update, delete: if isSignedIn() && (
+        request.auth.uid == resource.data.ownerId || isConnectedTo(resource.data.ownerId)
+      );
+    }
+
+    // Small shared list, low stakes -- any signed-in user can add/remove.
+    match /categories/{name} {
+      allow read, write: if isSignedIn();
+    }
+
+    // Private per-user saved view filters -- never read by anyone else.
+    match /views/{uid}/customViews/{viewId} {
+      allow read, write: if isSignedIn() && request.auth.uid == uid;
+    }
+  }
+}

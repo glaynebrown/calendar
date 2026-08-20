@@ -1,0 +1,812 @@
+:root {
+  --bg: #f4f3ef;
+  --surface: #ffffff;
+  --surface-2: #f7f6f2;
+  --text: #24231f;
+  --text-secondary: #6b6a63;
+  --text-muted: #9b9a91;
+  --border: rgba(0,0,0,0.09);
+  --border-strong: rgba(0,0,0,0.16);
+  --accent: #71816C;
+  --accent-text: #ffffff;
+  --radius: 10px;
+  --font-app: 'Inter', system-ui, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #1c1b19;
+    --surface: #26251f;
+    --surface-2: #2c2b25;
+    --text: #f1f0ea;
+    --text-secondary: #b3b1a6;
+    --text-muted: #7d7c74;
+    --border: rgba(255,255,255,0.1);
+    --border-strong: rgba(255,255,255,0.18);
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #1c1b19;
+  --surface: #26251f;
+  --surface-2: #2c2b25;
+  --text: #f1f0ea;
+  --text-secondary: #b3b1a6;
+  --text-muted: #7d7c74;
+  --border: rgba(255,255,255,0.1);
+  --border-strong: rgba(255,255,255,0.18);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-app);
+}
+
+/* background-image/size/position/repeat/color are set inline by applyBackground()
+   in settings.js, since they depend on the chosen fit mode and the photo's
+   auto-extracted fill color. */
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+input, select, textarea {
+  font-family: inherit;
+  font-size: 16px;
+}
+
+#app {
+  max-width: 480px;
+  margin: 0 auto;
+  min-height: 100vh;
+  min-height: 100dvh; /* accounts for mobile Safari's address/toolbar chrome, unlike 100vh */
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.hidden { display: none !important; }
+
+/* Avatar color swatches: the visible circle is purely decorative, and a real
+   <input type="color"> sits invisibly on top of it at full size so the tap
+   itself lands on the native control. iOS Safari doesn't reliably honor a
+   synthetic click() forwarded from a separate button, so this avoids that
+   entirely instead of relying on it. */
+.avatar-color-wrap { position: relative; display: inline-block; flex-shrink: 0; }
+.color-input-overlay {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  padding: 0; border: 0; margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.tab-panel { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.tab-panel.hidden { display: none; }
+.muted { color: var(--text-secondary); font-size: 13px; }
+
+/* Screen overlay (whoami) */
+.screen-overlay {
+  position: absolute;
+  inset: 0;
+  background: var(--bg);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.whoami-card { width: 100%; max-width: 360px; }
+.whoami-card h1 { font-size: 20px; font-weight: 500; margin: 0 0 6px; }
+
+/* Topbar */
+.topbar {
+  display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
+  padding: 14px 12px 8px;
+  gap: 8px;
+}
+.topbar-left { display: flex; align-items: center; justify-content: flex-start; }
+.topbar-actions { display: flex; align-items: center; justify-content: flex-end; gap: 2px; }
+.icon-btn {
+  background: none; border: none; padding: 6px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text-secondary); border-radius: 8px;
+}
+.icon-btn:hover { background: var(--surface-2); color: var(--text); }
+.icon-btn svg { width: 20px; height: 20px; }
+.month-nav { display: flex; align-items: center; gap: 4px; justify-self: center; }
+.month-label {
+  font-size: 16px; font-weight: 500; min-width: 130px; text-align: center;
+  background: none; border: none; color: var(--text); font-family: inherit; cursor: pointer;
+  padding: 4px 8px; border-radius: 8px;
+}
+.month-label:hover { background: var(--surface-2); }
+.panel-title { font-size: 16px; font-weight: 500; text-align: center; justify-self: center; }
+.toggle-checked { display: flex; align-items: center; width: auto; color: var(--text-secondary); }
+.toggle-checked.active { color: var(--accent); }
+.toggle-checked svg { width: 20px; height: 20px; }
+
+/* Switch (on/off toggle) */
+.field .switch-row, .switch-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; font-size: 14px; cursor: pointer;
+}
+.switch { position: relative; display: inline-block; width: 42px; height: 25px; flex-shrink: 0; }
+.switch input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; z-index: 1; }
+.switch-track {
+  position: absolute; inset: 0; background: var(--border-strong);
+  border-radius: 999px; transition: background 0.15s;
+}
+.switch-track::before {
+  content: ''; position: absolute; top: 2px; left: 2px;
+  width: 21px; height: 21px; border-radius: 50%; background: #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.3); transition: transform 0.15s;
+}
+.switch input:checked + .switch-track { background: var(--accent); }
+.switch input:checked + .switch-track::before { transform: translateX(17px); }
+
+/* Dropdown menu (views / search) */
+.dropdown-menu {
+  position: absolute; top: 56px; left: 12px; right: 12px;
+  background: var(--surface); border: 0.5px solid var(--border);
+  border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+  z-index: 40; padding: 8px; max-height: 60vh; overflow-y: auto;
+}
+.menu-item {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 10px; border-radius: 8px; font-size: 14px; width: 100%;
+  background: none; border: none; text-align: left; color: var(--text);
+}
+.menu-item:hover { background: var(--surface-2); }
+.menu-item.selected { color: var(--accent); font-weight: 500; }
+.menu-item.checklist-item { justify-content: flex-start; gap: 8px; cursor: pointer; }
+.menu-item.checklist-item input[type="checkbox"] { width: 16px; height: 16px; flex-shrink: 0; }
+.menu-divider { height: 0.5px; background: var(--border); margin: 6px 2px; }
+.menu-section-label { font-size: 11px; color: var(--text-muted); padding: 8px 10px 2px; text-transform: uppercase; letter-spacing: 0.03em; }
+
+/* Weekday row + grid */
+.weekday-row {
+  display: grid; grid-template-columns: repeat(7, 1fr);
+  padding: 4px 8px 0;
+}
+.weekday-row span {
+  text-align: center; font-size: 11px; color: var(--text-muted); padding: 4px 0;
+}
+.calendar-grid {
+  display: grid; grid-template-columns: repeat(7, 1fr);
+  grid-auto-rows: 1fr;
+  gap: 0; padding: 8px 2px;
+  margin: 4px 0 18px;
+  border-top: 0.5px solid var(--border);
+  border-bottom: 0.5px solid var(--border);
+  background: var(--surface-2);
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+html.bg-through-grid .calendar-grid { background: transparent; }
+
+/* Month/week/day/planner share one aesthetic: same opaque surface by default,
+   and the same "show background through" toggle makes them all transparent. */
+.week-view, .day-view, .planner-view { background: var(--surface-2); border-radius: 12px; }
+html.bg-through-grid .week-view,
+html.bg-through-grid .day-view,
+html.bg-through-grid .planner-view { background: transparent; }
+
+/* Week view: stacked day rectangles, Sunday on top through Saturday on bottom,
+   evenly filling the available height. */
+.week-view {
+  position: relative; display: flex; flex-direction: column; gap: 8px;
+  padding: 8px 8px 18px; flex: 1; overflow-y: auto;
+}
+.week-day-header-sticker { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.week-day-header-sticker .icon-btn { padding: 0; flex-shrink: 0; }
+.week-day-header-sticker .icon-btn svg { width: 15px; height: 15px; }
+.week-day-section {
+  background: var(--surface-2); border-radius: 12px; padding: 10px 12px;
+  border-left: 3px solid transparent;
+  flex: 1; display: flex; flex-direction: column; min-height: 0;
+}
+.week-day-section.today { border-left-color: var(--accent); }
+.week-day-header { font-size: 13px; font-weight: 600; color: var(--text-secondary); margin-bottom: 6px; flex-shrink: 0; }
+.week-day-section.today .week-day-header { color: var(--accent); }
+.week-day-events { display: flex; flex-direction: column; gap: 4px; cursor: pointer; min-height: 8px; flex: 1; overflow-y: auto; }
+.week-day-empty { margin: 2px 0; font-size: 12px; }
+
+/* Day view: same row style, full width, single list */
+.day-view { display: flex; flex-direction: column; padding: 8px 8px 18px; flex: 1; overflow-y: auto; }
+.day-view-events { gap: 6px; }
+
+.week-event-row {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 7px 10px; border-radius: 8px; border: none; border-left: 3px solid transparent;
+  background: var(--surface); font-size: 13px; font-weight: 500; text-align: left; cursor: pointer;
+}
+.day-event-row { padding: 10px 12px; font-size: 14px; }
+.week-event-row:hover { background: var(--border); }
+.week-event-time { color: var(--text-muted); font-size: 11px; font-weight: 500; flex-shrink: 0; }
+.week-event-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.day-event-owner { font-size: 11px; flex-shrink: 0; }
+
+/* Planner view: date header + a column of movable/resizable widget cards */
+.planner-view { position: relative; display: flex; flex-direction: column; padding: 8px 8px 18px; gap: 12px; flex: 1; overflow-y: auto; }
+/* Paper-flip transition when paging between planner days (arrows, swipe, or jump-to-date).
+   A real page darkens as it turns away from the light and casts a shadow as it
+   lifts off the stack, then settles flat with a quick-start/soft-landing ease --
+   that reads as paper. A flat opacity fade (the old version) reads as a UI slide. */
+@keyframes plannerFlipNext {
+  0% { transform: perspective(1600px) rotateY(-78deg); box-shadow: 22px 0 36px -12px rgba(0,0,0,0.4); filter: brightness(0.82); }
+  100% { transform: perspective(1600px) rotateY(0deg); box-shadow: 0 0 0 rgba(0,0,0,0); filter: brightness(1); }
+}
+@keyframes plannerFlipPrev {
+  0% { transform: perspective(1600px) rotateY(78deg); box-shadow: -22px 0 36px -12px rgba(0,0,0,0.4); filter: brightness(0.82); }
+  100% { transform: perspective(1600px) rotateY(0deg); box-shadow: 0 0 0 rgba(0,0,0,0); filter: brightness(1); }
+}
+.planner-view.flip-next { transform-origin: left center; animation: plannerFlipNext 0.5s cubic-bezier(0.16, 1, 0.3, 1); }
+.planner-view.flip-prev { transform-origin: right center; animation: plannerFlipPrev 0.5s cubic-bezier(0.16, 1, 0.3, 1); }
+.planner-header-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 2px 2px 0; }
+.planner-header {
+  font-size: 20px; font-weight: 600; font-family: inherit; color: var(--text);
+  background: none; border: none; padding: 4px 8px; margin: -4px 0 -4px -8px;
+  border-radius: 8px; cursor: pointer; text-align: left;
+}
+.planner-header:hover { background: var(--surface-2); }
+.planner-header-actions { position: relative; display: flex; gap: 2px; flex-shrink: 0; }
+/* Each widget owns its own row, one under the next -- "half" width just
+   means it only fills the left half of ITS row (the rest sits blank), so a
+   widget's size never pulls the next widget in to share space with it. That's
+   what lets you stack several half-width widgets straight down the left side. */
+.planner-widgets { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+.planner-widget { position: relative; background: var(--surface); border-radius: 12px; padding: 10px 12px 20px; touch-action: pan-y; min-width: 0; }
+.planner-widget.planner-width-full { align-self: stretch; }
+.planner-widget.planner-width-half { width: calc(50% - 5px); }
+/* Two half-width widgets deliberately paired by dragging one onto the other's
+   blank half -- rendered inside their own row wrapper so the pairing is explicit,
+   never automatic. */
+.planner-widget-pair { display: flex; gap: 10px; align-self: stretch; }
+.planner-widget-pair .planner-widget.planner-width-half { width: calc(50% - 5px); }
+
+/* Dragging a widget by its grip: a floating clone follows the pointer while
+   the original dims in place, and whatever's under the pointer gets a live
+   highlight -- a dashed right edge means "drop to pair", a solid top/bottom
+   edge means "drop to reorder here". */
+.planner-widget.dragging-source { opacity: 0.35; }
+.planner-widget-drag-ghost {
+  position: fixed; z-index: 300; pointer-events: none; opacity: 0.9;
+  box-shadow: 0 10px 28px rgba(0,0,0,0.28); border-radius: 12px; transform: rotate(-1deg);
+}
+.planner-widget.pair-drop-target { box-shadow: inset -3px 0 0 var(--accent); border-radius: 12px 6px 6px 12px; }
+.planner-widget.reorder-drop-before, .planner-widget-pair.reorder-drop-before { box-shadow: 0 -3px 0 var(--accent); }
+.planner-widget.reorder-drop-after, .planner-widget-pair.reorder-drop-after { box-shadow: 0 3px 0 var(--accent); }
+.planner-widget-resize-handle {
+  position: absolute; right: 4px; bottom: 4px; width: 22px; height: 22px; padding: 0;
+  border-radius: 6px; background: var(--surface-2); border: 0.5px solid var(--border);
+  color: var(--text-muted); display: flex; align-items: center; justify-content: center;
+  cursor: nwse-resize; touch-action: none;
+}
+.planner-widget-resize-handle svg { width: 13px; height: 13px; }
+.planner-widget-header { display: flex; align-items: center; gap: 4px; margin-bottom: 8px; }
+.planner-widget-title { flex: 1; font-size: 13px; font-weight: 600; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.planner-widget-header .icon-btn { padding: 6px; }
+.planner-widget-header .icon-btn svg { width: 15px; height: 15px; }
+.planner-widget-header .drag-handle, .planner-widget-header .planner-delete-btn, .planner-widget-header .planner-eraser-btn, .planner-widget-header .planner-save-template-btn { color: var(--text-muted); opacity: 0.5; }
+.planner-widget-header .drag-handle:hover, .planner-widget-header .planner-delete-btn:hover, .planner-widget-header .planner-eraser-btn:hover, .planner-widget-header .planner-save-template-btn:hover { opacity: 1; }
+.planner-widget-header .planner-delete-btn svg, .planner-widget-header .planner-eraser-btn svg, .planner-widget-header .planner-save-template-btn svg { width: 13px; height: 13px; }
+.planner-widget-header .planner-eraser-btn.active { opacity: 1; color: var(--accent); }
+.planner-widget-body .week-event-row + .week-event-row { margin-top: 4px; }
+.planner-moodboard-body { min-height: 100px; }
+.planner-notes-textarea {
+  width: 100%; min-height: 80px; border: none; background: transparent; color: var(--text);
+  font-size: 16px; font-family: inherit; resize: none;
+}
+.planner-checklist-row { display: flex; align-items: center; gap: 8px; padding: 1px 0; }
+.planner-checklist-row input[type="checkbox"] { flex-shrink: 0; accent-color: var(--accent); }
+.planner-checklist-text-input {
+  flex: 1; min-width: 0; border: none; background: transparent; color: var(--text);
+  font-size: 16px; font-family: inherit; padding: 2px 0;
+}
+.planner-checklist-text-input.checked { text-decoration: line-through; color: var(--text-muted); }
+.planner-add-item-row { margin-top: 2px; }
+.planner-add-item-row input[type="checkbox"]:disabled { opacity: 0.4; }
+.planner-add-item-input {
+  flex: 1; min-width: 0; border: none; background: transparent; color: var(--text);
+  font-size: 16px; font-family: inherit; padding: 2px 0;
+}
+.planner-add-item-input::placeholder { color: var(--text-muted); }
+.planner-empty { padding: 4px 0; font-size: 13px; }
+
+/* Blank (drawing) widget: no visible chrome until tapped/hovered, so the
+   canvas reads as a bare page rather than a titled card. */
+.planner-widget-blank { padding: 0; }
+.planner-widget-blank .planner-widget-header {
+  position: absolute; top: 4px; left: 4px; right: 4px; z-index: 2;
+  margin-bottom: 0; padding: 0; background: none; border: none;
+  opacity: 0; pointer-events: none; transition: opacity 0.15s ease;
+}
+.planner-widget-blank:hover .planner-widget-header,
+.planner-widget-blank.controls-visible .planner-widget-header {
+  opacity: 1; pointer-events: auto;
+}
+.planner-drawing-body { position: relative; min-height: 220px; touch-action: pan-y; }
+.planner-drawing-canvas { display: block; width: 100%; height: 100%; touch-action: pan-y; cursor: crosshair; color: var(--text); }
+
+/* Mood tracker: a row of tappable grayscale face icons, one active at a time.
+   Six faces fit one row at full width; at half width they wrap 3-and-3. */
+.planner-mood-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.planner-mood-btn {
+  flex: 1; min-width: 0; padding: 8px 0; border-radius: 10px; border: 0.5px solid transparent;
+  background: var(--surface-2); color: var(--text-secondary);
+  display: flex; align-items: center; justify-content: center;
+}
+.planner-mood-btn svg { width: 22px; height: 22px; }
+.planner-mood-btn.selected { border-color: var(--accent); background: var(--surface); color: var(--accent); }
+.planner-widget.planner-width-half .planner-mood-btn { flex: 0 0 calc(33.333% - 4px); }
+
+/* Photo/mood board: a small grid of uploaded thumbnails plus an add tile */
+.planner-photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(70px, 1fr)); gap: 8px; }
+.planner-photo-cell { position: relative; aspect-ratio: 1; border-radius: 10px; overflow: hidden; }
+.planner-photo-cell img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.planner-photo-remove {
+  position: absolute; top: 3px; right: 3px; width: 20px; height: 20px; padding: 0;
+  border-radius: 50%; background: rgba(0,0,0,0.55); color: #fff; display: flex;
+  align-items: center; justify-content: center;
+}
+.planner-photo-remove svg { width: 12px; height: 12px; }
+.planner-photo-upload {
+  aspect-ratio: 1; border-radius: 10px; border: 1px dashed var(--border-strong);
+  background: var(--surface-2); color: var(--text-muted); display: flex; align-items: center; justify-content: center;
+}
+.planner-photo-upload svg { width: 20px; height: 20px; }
+
+/* Custom widget creation form (inside the Add Widget menu) */
+.planner-custom-widget-form { padding: 4px 6px 6px; display: flex; flex-direction: column; gap: 6px; }
+.planner-custom-kind-row { display: flex; gap: 6px; }
+.planner-custom-kind-row .btn { flex: 1; padding: 6px 8px; font-size: 13px; }
+.planner-add-menu {
+  position: absolute; top: calc(100% + 8px); right: 0; z-index: 30; width: 190px; max-width: calc(100vw - 40px);
+  max-height: 70vh; overflow-y: auto;
+  background: var(--surface); border: 0.5px solid var(--border);
+  border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.12); padding: 6px;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.planner-catalog-row .drag-handle, .planner-catalog-row .icon-btn { color: var(--text-muted); opacity: 0.5; }
+.planner-catalog-row .drag-handle:hover, .planner-catalog-row .icon-btn:hover { opacity: 1; }
+.planner-preset-save-row { display: flex; gap: 6px; padding: 4px 6px 6px; }
+.planner-preset-name-input {
+  flex: 1; min-width: 0; padding: 6px 8px; border-radius: 8px; border: 0.5px solid var(--border-strong);
+  background: var(--surface-2); color: var(--text); font-size: 16px;
+}
+.planner-preset-save-row .btn { padding: 6px 10px; flex: 0 0 auto; }
+
+/* Stickers: a free-floating overlay on top of the planner page. The layer
+   itself ignores pointer events so it never blocks widgets underneath —
+   only placed stickers (and their handles) are actually interactive. */
+.planner-stickers-layer { position: absolute; inset: 0; pointer-events: none; z-index: 5; }
+.planner-sticker {
+  position: absolute; pointer-events: auto; cursor: grab; user-select: none;
+  line-height: 1; touch-action: none;
+}
+.planner-sticker.selected { outline: 1.5px dashed var(--accent); outline-offset: 8px; border-radius: 6px; }
+.planner-sticker-handle {
+  position: absolute; width: 22px; height: 22px; border-radius: 50%;
+  background: var(--accent); color: var(--accent-text); display: flex; align-items: center;
+  justify-content: center; font-size: 13px; line-height: 1; cursor: pointer; touch-action: none;
+}
+.planner-sticker-handle svg { width: 12px; height: 12px; }
+.planner-sticker-resize { right: -11px; bottom: -11px; cursor: nwse-resize; }
+.planner-sticker-rotate { top: -30px; left: 50%; transform: translateX(-50%); cursor: grab; }
+.planner-sticker-delete { top: -11px; right: -11px; background: var(--surface); border: 0.5px solid var(--border); color: var(--text-muted); }
+.planner-sticker-image img { display: block; width: 100%; height: auto; border-radius: 8px; pointer-events: none; }
+
+/* Sticker book: a small emoji library, styled as soft rounded chips, plus a
+   row to add your own emoji to the collection. */
+.sticker-book-panel {
+  position: absolute; top: calc(100% + 8px); right: -10px; z-index: 30; width: 280px; max-width: calc(100vw - 30px);
+  background: var(--surface); border: 0.5px solid var(--border);
+  border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.12); padding: 12px;
+}
+.sticker-book-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(52px, 1fr)); gap: 8px; }
+.sticker-chip-wrap { position: relative; aspect-ratio: 1; }
+.sticker-chip {
+  width: 100%; height: 100%; border-radius: 14px; background: var(--surface-2);
+  border: 0.5px solid var(--border); font-size: 26px; display: flex; align-items: center;
+  justify-content: center; box-shadow: 0 1px 3px rgba(0,0,0,0.06); transition: transform 0.1s;
+  touch-action: none;
+}
+.sticker-chip:active { transform: scale(0.9); }
+.sticker-chip img { width: 100%; height: 100%; object-fit: cover; border-radius: 14px; }
+
+/* Floating preview that follows the pointer while dragging a sticker off the book. */
+.sticker-drag-ghost {
+  position: fixed; z-index: 200; pointer-events: none; transform: translate(-50%, -50%);
+  font-size: 40px; opacity: 0.85; line-height: 1;
+}
+.sticker-drag-ghost img { width: 70px; height: 70px; object-fit: cover; border-radius: 10px; display: block; }
+.sticker-chip-remove {
+  position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; border-radius: 50%;
+  background: var(--surface); border: 0.5px solid var(--border); color: var(--text-muted);
+  display: flex; align-items: center; justify-content: center; padding: 0; z-index: 1;
+}
+.sticker-chip-remove svg { width: 10px; height: 10px; }
+.sticker-upload-row { margin-top: 10px; }
+.sticker-add-row { display: flex; gap: 6px; margin-top: 10px; }
+.sticker-add-row input {
+  flex: 1; min-width: 0; padding: 8px 10px; border-radius: 8px; border: 0.5px solid var(--border-strong);
+  background: var(--surface-2); color: var(--text); font-size: 16px; text-align: center;
+}
+.sticker-add-row input::placeholder { color: var(--text-muted); }
+.sticker-add-row .btn { flex: 0 0 auto; padding: 8px 14px; }
+
+/* User-chosen text color (Default/White/Black/Custom), so the topbar,
+   weekday header, and date numbers stay legible over whatever background
+   is set — the theme-driven secondary/muted grey doesn't always cut it,
+   especially over a photo. See applyBackground()/resolveTextColor(). */
+html.has-text-override .icon-btn,
+html.has-text-override .bottom-tab,
+html.has-text-override .weekday-row span,
+html.has-text-override .day-num,
+html.has-text-override .month-label,
+html.has-text-override .toggle-checked {
+  color: var(--text-override);
+}
+html.has-text-override .bottom-tab.active,
+html.has-text-override .toggle-checked.active {
+  color: var(--accent);
+}
+/* White text picks a dark hover background instead of the usual light
+   var(--surface-2) — otherwise a white icon vanishes against it on hover. */
+html.text-white .icon-btn:hover,
+html.text-white .month-label:hover {
+  background: rgba(0,0,0,0.35);
+  color: var(--text-override);
+}
+.day-cell {
+  background: transparent;
+  padding: 3px 2px; display: flex; flex-direction: column; gap: 1px;
+  border-right: 0.5px solid var(--border); border-bottom: 0.5px solid var(--border);
+  cursor: pointer; overflow: hidden; position: relative;
+}
+.day-cell:nth-child(7n) { border-right: none; }
+.day-cell-barspacer { flex-shrink: 0; }
+.day-cell:nth-last-child(-n+7) { border-bottom: none; }
+.day-cell.outside { opacity: 0.4; }
+.day-num { font-size: 11px; color: var(--text-secondary); padding: 1px 2px; line-height: 15px; }
+.day-cell.today .day-num {
+  background: var(--accent); color: var(--accent-text);
+  border-radius: 999px; display: flex; align-items: center; justify-content: center;
+  width: fit-content; min-width: 17px; height: 17px; padding: 1px 6px; line-height: 1;
+}
+.event-chip {
+  font-size: 10px; font-weight: 500; border-radius: 4px; padding: 1px 2px;
+  white-space: nowrap; overflow: hidden; text-overflow: clip;
+}
+.event-more { font-size: 9px; color: var(--text-muted); padding: 0 1px; }
+.multiday-bar {
+  position: absolute; height: 15px; font-size: 10px; font-weight: 500;
+  display: flex; align-items: center; padding: 0 4px;
+  white-space: nowrap; overflow: hidden; text-overflow: clip;
+  cursor: pointer; z-index: 5;
+}
+
+/* To-do */
+.notes-list {
+  padding: 12px; margin: 4px 8px 18px; border-radius: 14px; background: var(--surface-2);
+  display: flex; flex-direction: column; gap: 10px; flex: 1;
+}
+.note-card {
+  border-radius: 14px; padding: 12px 14px; position: relative;
+  background-size: cover; background-position: center;
+}
+.note-card-overlay { position: relative; z-index: 1; }
+.note-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; gap: 6px; }
+.note-title-group { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.note-title { font-size: 14px; font-weight: 500; word-break: break-word; }
+.note-owner-tag { font-size: 11px; opacity: 0.7; display: flex; align-items: center; gap: 3px; }
+.note-owner-tag svg { width: 11px; height: 11px; }
+.note-menu-btn { background: none; border: none; padding: 2px; flex-shrink: 0; }
+.note-menu-btn svg { width: 16px; height: 16px; }
+.note-items { display: flex; flex-direction: column; }
+.note-item { display: flex; gap: 6px; align-items: flex-start; padding: 3px 0; font-size: 13px; }
+.note-item svg { width: 17px; height: 17px; flex-shrink: 0; margin-top: 1px; }
+.note-item.checked { text-decoration: line-through; opacity: 0.6; }
+.note-item-text { flex: 1; min-width: 0; cursor: text; padding: 1px 2px; }
+.note-add-item { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+.note-add-btn svg { width: 16px; height: 16px; flex-shrink: 0; }
+.note-add-item input { flex: 1; background: rgba(255,255,255,0.5); border: none; border-radius: 6px; padding: 4px 6px; font-size: 16px; }
+.note-empty { text-align: center; color: var(--text-muted); font-size: 13px; margin-top: 60px; }
+.note-text-area {
+  width: 100%; min-height: 100px; border: none; background: transparent;
+  font-size: 16px; font-family: inherit; resize: none;
+}
+.note-text-area::placeholder { color: inherit; opacity: 0.6; }
+
+/* Drag-to-reorder (notes list and note items) */
+.drag-handle {
+  background: none; border: none; padding: 0 2px; flex-shrink: 0;
+  display: flex; align-items: center; touch-action: none; cursor: grab;
+}
+.drag-handle svg { width: 16px; height: 16px; }
+.sortable-item.dragging { opacity: 0.5; }
+.note-card.sortable-item { touch-action: pan-y; }
+
+/* FAB (sits inline in the bottom tab bar, between the two tabs) */
+.fab {
+  width: 52px; height: 52px; flex-shrink: 0; border-radius: 50%;
+  background: var(--accent); color: var(--accent-text);
+  border: none; display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+  margin: -22px 16px 0;
+}
+.fab svg { width: 24px; height: 24px; }
+
+/* Bottom tabs */
+.bottom-tabs {
+  display: flex; align-items: center;
+  position: sticky; bottom: 0; z-index: 20;
+}
+.bottom-tab {
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 9px 0 8px; background: none; border: none; color: var(--text-muted);
+}
+.bottom-tab svg { width: 21px; height: 21px; }
+.bottom-tab span:last-child { font-size: 10.5px; }
+.bottom-tab.active { color: var(--accent); }
+
+/* Modals */
+.modal-backdrop {
+  position: absolute; inset: 0; background: rgba(0,0,0,0.45);
+  z-index: 60; display: flex; align-items: flex-end; justify-content: center;
+}
+.modal-sheet {
+  background: var(--surface); width: 100%; max-width: 480px;
+  border-radius: 18px 18px 0 0; padding: 18px 18px 24px;
+  max-height: 88vh; overflow-y: auto;
+}
+.modal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+.modal-header h2 { font-size: 17px; font-weight: 500; margin: 0; }
+.modal-close { background: none; border: none; color: var(--text-secondary); }
+.modal-close svg { width: 20px; height: 20px; }
+
+.field { margin-bottom: 14px; }
+.field label { display: block; font-size: 12px; color: var(--text-secondary); margin-bottom: 5px; }
+.field input[type="text"], .field input[type="date"], .field input[type="password"],
+.field input[type="number"], .field select, .field textarea {
+  width: 100%; padding: 9px 10px; border-radius: 8px; border: 0.5px solid var(--border-strong);
+  background: var(--surface-2); color: var(--text);
+}
+.field-row { display: flex; gap: 10px; align-items: flex-start; }
+.field-row .field { flex: 1; min-width: 0; }
+.field-row .field input[type="date"] { width: 100%; min-width: 0; padding-left: 6px; padding-right: 4px; }
+.field-row > input[type="text"] {
+  flex: 1; min-width: 0; padding: 10px; border-radius: 8px; border: 0.5px solid var(--border-strong);
+  background: var(--surface-2); color: var(--text); font-size: 16px;
+}
+.checkbox-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 14px; margin-bottom: 10px; }
+.checkbox-row label { display: flex; align-items: center; gap: 8px; margin: 0; }
+.checkbox-row input { width: 16px; height: 16px; flex-shrink: 0; accent-color: var(--accent); }
+.checkbox-row .link-btn { flex-shrink: 0; padding: 0; }
+.link-btn { background: none; border: none; color: var(--accent); font-size: 13px; padding: 4px 0; }
+.people-picker { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 14px; }
+.people-picker label { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: normal; }
+
+.btn { padding: 10px 16px; border-radius: 8px; border: 0.5px solid var(--border-strong); background: var(--surface-2); color: var(--text); font-size: 14px; }
+.btn svg { width: 16px; height: 16px; flex-shrink: 0; }
+.btn-primary { background: var(--accent); color: var(--accent-text); border: none; font-weight: 500; }
+.btn-danger { color: #c0392b; }
+.btn-row { display: flex; gap: 10px; margin-top: 18px; }
+.btn-row .btn { flex: 1; }
+
+.color-swatch-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; }
+.color-swatch-row-left { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+.avatar-mini { width: 26px; height: 26px; border-radius: 50%; background-size: cover; background-position: center; display: flex; align-items: center; justify-content: center; font-size: 10px; color: #fff; font-weight: 500; }
+.avatar-color-btn { border: none; padding: 0; cursor: pointer; font: inherit; flex-shrink: 0; }
+
+.settings-section { margin-bottom: 20px; }
+.settings-section h3 { font-size: 13px; font-weight: 500; color: var(--text-secondary); margin: 0 0 8px; text-transform: uppercase; letter-spacing: 0.03em; }
+
+.bg-color-grid { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+.bg-color-swatch, .bg-color-grid input[type="color"], .color-box {
+  width: 32px; height: 32px; flex-shrink: 0;
+  border-radius: 8px; border: 2px solid transparent; padding: 0; cursor: pointer;
+}
+.bg-color-swatch.selected { border-color: var(--text); }
+
+/* Native color inputs render their swatch with their own inset/border by
+   default, so the picked color never quite fills our rounded box. Strip
+   that chrome so the color fills the box edge to edge, corners included. */
+input[type="color"] { -webkit-appearance: none; appearance: none; }
+input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+input[type="color"]::-webkit-color-swatch { border: none; border-radius: inherit; }
+input[type="color"]::-moz-color-swatch { border: none; border-radius: inherit; }
+
+/* Wraps a real (invisible) color input so the box always shows a rainbow
+   wheel instead of the live picked value — reads as "tap for any color"
+   wherever a custom color option sits next to presets. */
+.color-wheel-trigger {
+  position: relative; display: inline-block; flex-shrink: 0;
+  width: 32px; height: 32px; border-radius: 8px; border: 2px solid transparent;
+  background: conic-gradient(from 0deg, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
+}
+.color-wheel-trigger.selected { border-color: var(--text); }
+.color-wheel-trigger input[type="color"] {
+  position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; border: none; padding: 0;
+}
+.text-color-swatch {
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 500; color: var(--text); background: var(--surface-2);
+}
+.white-swatch { box-shadow: inset 0 0 0 1px var(--border-strong); }
+
+/* Appearance settings: font / accent / background / text color in one row */
+.appearance-row { display: flex; flex-wrap: wrap; gap: 18px; align-items: flex-start; }
+.appearance-row .field { flex: 0 0 auto; margin-bottom: 14px; }
+.appearance-row .field.appearance-font { flex: 0 0 128px; width: 128px; }
+
+/* Category color dot (hamburger menu) */
+.cat-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; display: inline-block; }
+.menu-item-inner { display: flex; align-items: center; gap: 8px; }
+.menu-item-row { display: flex; align-items: center; }
+.menu-item-row .menu-item { flex: 1; }
+.menu-item-row .icon-btn { padding: 6px; flex-shrink: 0; }
+.birthday-row {
+  width: 100%; padding: 9px 10px; border-radius: 8px; border: 0.5px solid var(--border-strong);
+  background: var(--surface-2); color: var(--text); margin-bottom: 8px;
+}
+#bd-form-wrap:not(:empty) { margin-top: 14px; }
+
+.file-btn-row { display: flex; align-items: center; gap: 10px; }
+.file-btn-row input[type="text"] {
+  padding: 9px 10px; border-radius: 8px; border: 0.5px solid var(--border-strong);
+  background: var(--surface-2); color: var(--text); font-size: 16px;
+}
+.extra-date-row { display: flex; gap: 6px; margin-bottom: 6px; align-items: center; }
+.extra-date-row .time-field-btn { flex: 1; }
+
+/* Attachment picker, styled to match the other field boxes */
+.attachment-box {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; padding: 9px 10px; border-radius: 8px; border: 0.5px solid var(--border-strong);
+  background: var(--surface-2); color: var(--text); cursor: pointer;
+}
+.attachment-box > svg { width: 16px; height: 16px; flex-shrink: 0; color: var(--text-muted); }
+.attachment-box-label { flex: 1; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attachment-box-label.placeholder { color: var(--text-muted); }
+.attachment-box .icon-btn { padding: 2px; flex-shrink: 0; }
+.attachment-box .icon-btn svg { width: 16px; height: 16px; }
+
+/* Note textarea with a leading icon, matching the other field boxes */
+.textarea-with-icon {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 9px 10px; border-radius: 8px; border: 0.5px solid var(--border-strong);
+  background: var(--surface-2);
+}
+.textarea-with-icon > svg { width: 16px; height: 16px; flex-shrink: 0; color: var(--text-muted); margin-top: 1px; }
+.textarea-with-icon textarea {
+  flex: 1; padding: 0; border: none; background: none; width: auto;
+}
+
+/* Time field button (opens the scrolling time picker) */
+.time-field-btn {
+  width: 100%; display: flex; align-items: center; gap: 6px;
+  text-align: left; padding: 9px 10px; border-radius: 8px;
+  border: 0.5px solid var(--border-strong); background: var(--surface-2); color: var(--text);
+  font-size: 14px;
+}
+.time-field-btn svg { width: 16px; height: 16px; flex-shrink: 0; }
+.time-field-btn .tf-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.time-field-btn.placeholder { color: var(--text-muted); }
+.time-field-btn.icon-only {
+  width: 36px; height: 36px; padding: 0; display: flex; align-items: center; justify-content: center;
+}
+.time-field-btn.icon-only svg { width: 18px; height: 18px; }
+.time-field-btn.active { color: var(--accent); border-color: var(--accent); }
+
+/* Repeat frequency menu: floats over the form instead of pushing it down */
+.repeat-menu {
+  position: absolute; top: calc(100% + 4px); left: 0; right: 0;
+  background: var(--surface); border: 0.5px solid var(--border); border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.12); padding: 4px; z-index: 20;
+}
+.repeat-menu .menu-item { padding: 8px 10px; font-size: 13px; }
+
+/* Repeat + Ends, consolidated into one field column no wider than its sibling */
+.repeat-field-row { display: flex; gap: 8px; align-items: flex-start; }
+#ev-repeat-field, #ev-reminder-field { position: relative; }
+#ev-repeat-field .time-field-btn { flex: 1; width: auto; }
+#ev-repeat-field .time-field-btn.icon-only { flex: 0 0 36px; }
+#ev-repeat-field select { flex: 1; width: auto; font-size: 13px; padding: 9px 6px; }
+#ev-ends-extra input { width: 100%; }
+#ev-repeat-field #ev-ends-date-btn { flex: 0 0 100%; width: 100%; margin-bottom: 8px; }
+.custom-dates-btn { flex: 1; width: auto; }
+.custom-dates-btn .tf-text { white-space: normal; text-align: left; }
+
+/* Scrolling time picker */
+.time-picker-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.45);
+  z-index: 80; display: flex; align-items: flex-end; justify-content: center;
+}
+.time-picker-sheet {
+  background: var(--surface); width: 100%; max-width: 480px;
+  border-radius: 18px 18px 0 0; padding: 10px 0 20px;
+}
+.time-picker-handle {
+  width: 36px; height: 4px; border-radius: 2px; background: var(--border-strong);
+  margin: 0 auto 12px;
+}
+.time-picker-title { text-align: center; font-size: 15px; font-weight: 500; margin-bottom: 10px; }
+.time-picker-columns {
+  position: relative; display: flex; justify-content: center;
+  height: 220px; margin-bottom: 16px;
+}
+.tp-highlight-band {
+  position: absolute; left: 16px; right: 16px; top: 50%; transform: translateY(-50%);
+  height: 44px; border-top: 0.5px solid var(--border-strong); border-bottom: 0.5px solid var(--border-strong);
+  pointer-events: none;
+}
+.tp-col {
+  width: 70px; height: 220px; overflow-y: auto; scroll-snap-type: y mandatory;
+  padding: 88px 0; scrollbar-width: none;
+}
+.tp-col::-webkit-scrollbar { display: none; }
+.tp-item {
+  height: 44px; display: flex; align-items: center; justify-content: center;
+  font-size: 20px; scroll-snap-align: center; color: var(--text); cursor: pointer;
+}
+
+/* Custom date picker */
+.date-picker-sheet { padding: 10px 16px 24px; }
+.date-picker-nav { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.date-picker-month-label { font-size: 15px; font-weight: 500; }
+.date-picker-weekdays { display: grid; grid-template-columns: repeat(7, 1fr); margin-bottom: 4px; }
+.date-picker-weekdays span { text-align: center; font-size: 11px; color: var(--text-muted); }
+.date-picker-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+.dp-day {
+  aspect-ratio: 1; border-radius: 50%; border: none; background: none;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px; color: var(--text); cursor: pointer;
+}
+.dp-day:hover { background: var(--surface-2); }
+.dp-day.outside { color: var(--text-muted); opacity: 0.5; }
+.dp-day.today { box-shadow: inset 0 0 0 1px var(--border-strong); }
+.dp-day.range-start, .dp-day.range-end, .dp-day.multi-selected {
+  background: color-mix(in srgb, var(--accent) 22%, var(--surface));
+  color: var(--accent); font-weight: 500; box-shadow: none;
+}
+.dp-day.range-start:hover, .dp-day.range-end:hover, .dp-day.multi-selected:hover { background: color-mix(in srgb, var(--accent) 32%, var(--surface)); }
+.dp-day.in-range {
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  border-radius: 4px;
+}
+.date-picker-hint { text-align: center; margin: 6px 0 0; }
+
+/* Day-view sheet (tapping a day that already has events) */
+.day-view-row {
+  display: flex; align-items: center; gap: 2px; width: 100%;
+  padding: 2px 8px 2px 2px; border-radius: 8px; border-left: 3px solid transparent;
+  background: var(--surface-2); margin-bottom: 6px;
+}
+.day-view-row:hover { background: var(--border); }
+.day-view-row .drag-handle { padding: 8px; flex-shrink: 0; }
+.day-view-row-open {
+  flex: 1; min-width: 0; display: flex; align-items: center;
+  background: none; border: none; padding: 9px 4px; font-size: 14px; font-weight: 500;
+  text-align: left; cursor: pointer;
+}
+
+/* Wider layout for tablet/laptop-size viewports — the app shell was capped
+   at a phone width (480px) even on a wide window. The grid/flex layouts
+   throughout are already fluid, so widening #app is enough to make the
+   month grid, week/day rows, and note cards use the extra space. Modals
+   get a bit wider too so forms don't feel cramped; the time/date pickers
+   stay as-is since they're compact bottom sheets by design either way. */
+@media (min-width: 768px) {
+  #app { max-width: 960px; }
+  .modal-sheet { max-width: 560px; }
+}

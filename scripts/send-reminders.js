@@ -99,11 +99,15 @@ function formatReminderBody(event, occDate) {
 
 async function main() {
   const now = new Date();
-  // Wider than the 5-minute cron interval, on purpose -- GitHub's own docs
-  // warn scheduled runs can be delayed, sometimes well past their nominal
-  // time under load. sentReminders makes a wide catch-up window safe: it can
-  // never cause a duplicate send, only widen the net for a late run.
-  const windowStart = new Date(now.getTime() - 15 * 60 * 1000);
+  // Much wider than the 5-minute cron interval, on purpose -- observed in
+  // practice (via the Actions run history), GitHub does not run this every
+  // 5 minutes on a low-traffic personal repo. It's been landing roughly
+  // once every 1-2 hours, not every 5 minutes, regardless of the schedule
+  // below. sentReminders makes a wide catch-up window safe: it can never
+  // cause a duplicate send, only widen the net for a late run -- so the
+  // window needs to comfortably outlast the longest gap actually seen
+  // between runs, not the configured interval.
+  const windowStart = new Date(now.getTime() - 180 * 60 * 1000);
   const todayStr = formatISO(now);
   const lookaheadEnd = formatISO(new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000));
 

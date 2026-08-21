@@ -794,7 +794,7 @@ input[type="color"]::-moz-color-swatch { border: none; border-radius: inherit; }
   background: var(--surface-2); margin-bottom: 6px;
 }
 .day-view-row:hover { background: var(--border); }
-.day-view-row .drag-handle { padding: 8px; flex-shrink: 0; }
+.day-view-row .drag-handle { padding: 8px; flex-shrink: 0; color: var(--accent); }
 .day-view-row-open {
   flex: 1; min-width: 0; display: flex; align-items: center;
   background: none; border: none; padding: 9px 4px; font-size: 14px; font-weight: 500;

@@ -78,6 +78,22 @@ const App = {
 
     Settings.init();
 
+    // Resets the active view back to the chosen default the moment the app
+    // is backgrounded, not when it's reopened -- resetting on reopen (e.g.
+    // in onSignedIn, tied to onAuthStateChanged firing fresh) only works
+    // for a genuine full page reload. On iOS in particular, "closing" and
+    // reopening the app very often just suspends and resumes the same page
+    // instance instead of actually reloading it, so that callback never
+    // fires again and the view never resets. Resetting on the way OUT
+    // instead means it doesn't matter which of those two actually happens
+    // next -- the saved view is already back to default either way by the
+    // time anyone looks at it again.
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) return;
+      const userId = Store.getCurrentUserId();
+      if (userId) Store.setActiveViewId(userId, Store.getDefaultViewId(userId));
+    });
+
     // Firebase persists the session itself -- this fires once immediately
     // with whatever's already signed in (or null), then again on every
     // future sign-in/sign-out, so it's the single source of truth for
@@ -104,7 +120,14 @@ const App = {
     await Store.startSync(user.uid);
     document.getElementById('loading-screen').classList.add('hidden');
     Store.migrateLocalNotesIfNeeded(user.uid);
+    Store.migrateLocalPreferencesIfNeeded(user.uid);
     Store.onDataChange(() => {
+      // Re-applies the theme on every cache update, not just ones that
+      // actually touched it -- cheap (just sets a few CSS vars/classes) and
+      // it's what corrects the brief cold-load fallback (see getTheme's own
+      // comment) to the real synced value the moment it arrives, and what
+      // makes a theme change on another device show up live here too.
+      applyTheme(Store.getTheme());
       if (this.activeTab === 'calendar-tab') Calendar.render();
       else Todo.render();
     });

@@ -142,6 +142,15 @@ service cloud.firestore {
       allow read, write: if isSignedIn() && request.auth.uid == uid;
     }
 
+    // Private per-account APPEARANCE preferences (colors, category order,
+    // theme, fonts, backgrounds -- see store.js's startSync `preferences`
+    // listener and getTheme/getColorMap/etc). Same fully-private,
+    // owner-only shape as views above -- this is what makes "my colors
+    // look the same on every device I sign into" possible.
+    match /preferences/{uid} {
+      allow read, write: if isSignedIn() && request.auth.uid == uid;
+    }
+
     // To-do lists / sticky notes. Read: same denormalized-visibleTo pattern
     // as events (see the comment there) -- visibleTo is just
     // [ownerId, ...sharedWith], computed client-side in store.js's

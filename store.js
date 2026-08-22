@@ -1,10 +1,14 @@
 /* Data layer. Shared calendar data (accounts, connections, households,
    invites, events, categories, views) lives in Firestore and syncs across
    devices via Firebase Auth -- see firebase-config.js and firestore.rules.
-   Everything else (todos, planner content, per-device theme, birthdays,
-   stickers, habits, event presets, holidays-followed) stays in localStorage,
-   same as always: these are per-device preferences or intentionally local
-   data, not shared calendar content. */
+   Appearance preferences (colors, category order, theme, fonts,
+   backgrounds -- see the `preferences` collection below) also sync via
+   Firestore, per-account rather than per-device, but each getter keeps a
+   localStorage fallback for resilience (see the `_pref`/`preferences` note
+   near onDataChange). Everything else (todos, planner content, birthdays,
+   stickers, habits, event presets, holidays-followed) stays in localStorage
+   only: these are intentionally local/session state, not shared calendar
+   content or appearance. */
 
 // Auto-assigned colors (new accounts, new categories) before anyone picks
 // their own -- kept soft/muted to match the app's palette, not saturated or
@@ -46,6 +50,7 @@ const _cache = {
   views: [],       // the CURRENT signed-in user's own custom views only (private)
   editTrust: [],   // uids the CURRENT signed-in user has mutual edit-trust with (private)
   notes: [],       // own notes plus any shared with the current user (see the `visibleTo` note below)
+  preferences: {}, // the CURRENT signed-in user's own synced appearance settings (private)
 };
 let _unsubscribers = [];
 let _changeListeners = [];
@@ -87,7 +92,7 @@ const Store = {
   startSync(userId) {
     this.stopSync();
     const db = firebase.firestore();
-    const pending = new Set(['accounts', 'connections-a', 'connections-b', 'households', 'events', 'categories', 'views', 'editTrust', 'notes']);
+    const pending = new Set(['accounts', 'connections-a', 'connections-b', 'households', 'events', 'categories', 'views', 'editTrust', 'notes', 'preferences']);
     let resolveReady;
     const ready = new Promise(res => { resolveReady = res; });
     const settle = key => {
@@ -166,6 +171,24 @@ const Store = {
       }
     ));
 
+    // Per-account APPEARANCE preferences (colors, category order, theme,
+    // fonts, backgrounds) -- see getTheme/getColorMap/etc below. Same
+    // fully-private, owner-only doc shape as editIndex/views. Every getter
+    // below also falls back to this exact device's own localStorage copy
+    // (kept in sync by every setter below regardless of whether this write
+    // succeeds), so a rules-deploy gap or an offline device never regresses
+    // to blank defaults -- same defensive settle-on-error as notes above.
+    _unsubscribers.push(db.collection('preferences').doc(userId).onSnapshot(
+      snap => {
+        _cache.preferences = snap.data() || {};
+        settle('preferences'); notify();
+      },
+      err => {
+        console.warn('Preferences sync failed:', err.code);
+        settle('preferences'); notify();
+      }
+    ));
+
     return ready;
   },
   stopSync() {
@@ -173,7 +196,7 @@ const Store = {
     _unsubscribers = [];
     _cache.accounts = []; _cache.connections = []; _cache.households = [];
     _cache.events = []; _cache.categories = []; _cache.views = []; _cache.editTrust = [];
-    _cache.notes = [];
+    _cache.notes = []; _cache.preferences = {};
   },
   // Registers a callback fired after every live cache update (i.e. a change
   // made by someone else, or on another device, arrived). main.js uses this
@@ -182,6 +205,24 @@ const Store = {
     this._changeListeners.push(fn);
   },
   _changeListeners,
+
+  // ---- per-account appearance preferences (colors, order, theme, fonts,
+  // backgrounds) -- see startSync's `preferences` listener above. Every
+  // setting below reads the synced value if present, else falls back to
+  // this exact device's own localStorage copy (which every setter keeps
+  // updated regardless of whether the Firestore write succeeds), so a
+  // rules-deploy gap or an offline device never regresses to blank
+  // defaults -- it just keeps behaving like it always did before this
+  // existed. ----
+  _pref(key) {
+    return (_cache.preferences && Object.prototype.hasOwnProperty.call(_cache.preferences, key)) ? _cache.preferences[key] : undefined;
+  },
+  _syncPref(userId, key, value) {
+    _cache.preferences = { ..._cache.preferences, [key]: value };
+    firebase.firestore().collection('preferences').doc(userId).set({ [key]: value }, { merge: true }).catch(err => {
+      console.warn('Preference sync failed for', key, err.code);
+    });
+  },
 
   // ---- accounts ----
   getAccounts() {
@@ -505,10 +546,13 @@ const Store = {
   // has manually placed yet, or ones another person just added, just land
   // at the end until you drag them somewhere.
   getCategoryOrder(userId) {
+    const synced = this._pref('categoryOrder');
+    if (synced !== undefined) return synced;
     return readJSON(`fc_catOrder_${userId}`, []);
   },
   setCategoryOrder(userId, orderedNames) {
     writeJSON(`fc_catOrder_${userId}`, orderedNames);
+    this._syncPref(userId, 'categoryOrder', orderedNames);
   },
   getCategories() {
     const order = this.getCategoryOrder(this.getCurrentUserId());
@@ -545,9 +589,10 @@ const Store = {
 
     const colorMap = this.getCategoryColorMap(Store.getCurrentUserId());
     if (colorMap[oldName]) {
-      colorMap[newName] = colorMap[oldName];
-      delete colorMap[oldName];
-      writeJSON(`fc_catcolors_${Store.getCurrentUserId()}`, colorMap);
+      const next = { ...colorMap, [newName]: colorMap[oldName] };
+      delete next[oldName];
+      writeJSON(`fc_catcolors_${Store.getCurrentUserId()}`, next);
+      this._syncPref(Store.getCurrentUserId(), 'categoryColors', next);
     }
   },
   // Un-tags any events using this category (doesn't delete the events).
@@ -565,28 +610,33 @@ const Store = {
 
     const colorMap = this.getCategoryColorMap(Store.getCurrentUserId());
     if (colorMap[name]) {
-      delete colorMap[name];
-      writeJSON(`fc_catcolors_${Store.getCurrentUserId()}`, colorMap);
+      const next = { ...colorMap };
+      delete next[name];
+      writeJSON(`fc_catcolors_${Store.getCurrentUserId()}`, next);
+      this._syncPref(Store.getCurrentUserId(), 'categoryColors', next);
     }
   },
 
-  // ---- per-user category color map (like colorFor, but keyed by category
-  // name) -- stays local/per-device, same as before. ----
+  // ---- per-account category color map (like colorFor, but keyed by
+  // category name) -- see the `preferences` note above. ----
   getCategoryColorMap(userId) {
+    const synced = this._pref('categoryColors');
+    if (synced !== undefined) return synced;
     return readJSON(`fc_catcolors_${userId}`, {});
   },
   setCategoryColor(userId, category, color) {
-    const map = this.getCategoryColorMap(userId);
-    map[category] = color;
-    writeJSON(`fc_catcolors_${userId}`, map);
+    const next = { ...this.getCategoryColorMap(userId), [category]: color };
+    writeJSON(`fc_catcolors_${userId}`, next);
+    this._syncPref(userId, 'categoryColors', next);
   },
   // Explicitly un-sets a category's color, back to "no color of its own" --
   // distinct from setCategoryColor(..., null), which would still work the
   // same way, but this reads clearer at call sites that mean "clear it".
   clearCategoryColor(userId, category) {
-    const map = this.getCategoryColorMap(userId);
-    delete map[category];
-    writeJSON(`fc_catcolors_${userId}`, map);
+    const next = { ...this.getCategoryColorMap(userId) };
+    delete next[category];
+    writeJSON(`fc_catcolors_${userId}`, next);
+    this._syncPref(userId, 'categoryColors', next);
   },
   // A category has a color ONLY if you explicitly picked one -- no more
   // auto-assigning from DEFAULT_COLORS just because it exists. That auto-
@@ -663,10 +713,13 @@ const Store = {
   // ---- whether events show their person/category color as a background
   // chip / left border, or just plain title text with no color coding ----
   getShowEventColors(userId) {
+    const synced = this._pref('showEventColors');
+    if (synced !== undefined) return synced;
     return localStorage.getItem(`fc_showEventColors_${userId}`) !== '0';
   },
   setShowEventColors(userId, val) {
     localStorage.setItem(`fc_showEventColors_${userId}`, val ? '1' : '0');
+    this._syncPref(userId, 'showEventColors', !!val);
   },
   // Month view only (day chips + multi-day bars): whether the event's own
   // color tints both box and text ('colored', the default), or the box
@@ -674,10 +727,13 @@ const Store = {
   // other color preference -- your choice here doesn't affect what anyone
   // else on the household sees.
   getEventTextMode(userId) {
+    const synced = this._pref('eventTextMode');
+    if (synced !== undefined) return synced;
     return localStorage.getItem(`fc_eventTextMode_${userId}`) || 'colored';
   },
   setEventTextMode(userId, mode) {
     localStorage.setItem(`fc_eventTextMode_${userId}`, mode);
+    this._syncPref(userId, 'eventTextMode', mode);
   },
   // categories: [] means "all categories, including uncategorized" (same convention as views).
   getChecklistFilter(userId) {
@@ -829,14 +885,16 @@ const Store = {
     this.savePlannerPresets(userId, this.getPlannerPresets(userId).filter(p => p.id !== presetId));
   },
 
-  // ---- per-user color map (which color I see each person as) ----
+  // ---- per-account color map (which color I see each person as) ----
   getColorMap(userId) {
+    const synced = this._pref('personColors');
+    if (synced !== undefined) return synced;
     return readJSON(`fc_colors_${userId}`, {});
   },
   setColorForPerson(userId, personId, color) {
-    const map = this.getColorMap(userId);
-    map[personId] = color;
-    writeJSON(`fc_colors_${userId}`, map);
+    const next = { ...this.getColorMap(userId), [personId]: color };
+    writeJSON(`fc_colors_${userId}`, next);
+    this._syncPref(userId, 'personColors', next);
   },
   colorFor(userId, personId) {
     const map = this.getColorMap(userId);
@@ -845,60 +903,81 @@ const Store = {
     return person ? person.defaultColor : '#888787';
   },
 
-  // ---- per-user, per-event custom color (like the person color map above,
-  // but for a specific event) -- deliberately local/per-device rather than a
-  // field on the event doc itself, so setting a custom color on a shared
-  // event only changes how it looks on your own calendar. Anyone else who
-  // can edit the event is free to pick their own color for it too, without
-  // overwriting or being overwritten by yours. ----
+  // ---- per-account, per-event custom color (like the person color map
+  // above, but for a specific event) -- deliberately synced to your account
+  // rather than a field on the event doc itself, so setting a custom color
+  // on a shared event only changes how it looks on your own calendar (on
+  // every device). Anyone else who can edit the event is free to pick their
+  // own color for it too, without overwriting or being overwritten by
+  // yours. ----
   getEventColorMap(userId) {
+    const synced = this._pref('eventColors');
+    if (synced !== undefined) return synced;
     return readJSON(`fc_eventcolors_${userId}`, {});
   },
   setEventColor(userId, eventId, color) {
-    const map = this.getEventColorMap(userId);
+    const map = { ...this.getEventColorMap(userId) };
     if (color) map[eventId] = color; else delete map[eventId];
     writeJSON(`fc_eventcolors_${userId}`, map);
+    this._syncPref(userId, 'eventColors', map);
   },
   eventColorFor(userId, eventId) {
     return this.getEventColorMap(userId)[eventId] || null;
   },
 
-  // ---- per-device theme ----
+  // ---- per-account theme -- zero-arg by design (always the current
+  // signed-in user's own), same as getCurrentUserId(). Falls back to this
+  // device's own last-saved copy (written by every saveTheme call below,
+  // synced or not) whenever the real synced value isn't available yet --
+  // this is what avoids a flash to hardcoded defaults on cold app load,
+  // since applyTheme(Store.getTheme()) in main.js's App.init() runs before
+  // Firestore sync even starts. ----
   getTheme() {
+    const synced = this._pref('theme');
+    if (synced !== undefined) return synced;
     return readJSON('fc_theme', { font: 'Inter', bgColor: null, bgPhoto: null, bgFit: 'fit', bgAutoColor: null, bgBorderColor: null, bgThroughGrid: false, textColor: null, accent: '#71816C', colorMode: 'light' });
   },
   saveTheme(theme) {
     writeJSON('fc_theme', theme);
+    const userId = this.getCurrentUserId();
+    this._syncPref(userId, 'theme', theme);
   },
 
-  // ---- per-device month background overrides (keyed by month index 0-11, repeats yearly) ----
+  // ---- per-account month background overrides (keyed by month index 0-11, repeats yearly) ----
   getMonthThemes() {
+    const synced = this._pref('monthThemes');
+    if (synced !== undefined) return synced;
     return readJSON('fc_monthThemes', {});
   },
   getMonthTheme(monthIndex) {
     return this.getMonthThemes()[monthIndex] || null;
   },
   setMonthTheme(monthIndex, theme) {
-    const themes = this.getMonthThemes();
+    const themes = { ...this.getMonthThemes() };
     if (theme) themes[monthIndex] = theme;
     else delete themes[monthIndex];
     writeJSON('fc_monthThemes', themes);
+    this._syncPref(this.getCurrentUserId(), 'monthThemes', themes);
   },
 
-  // ---- per-device planner background overrides (keyed by month index 0-11,
-  // same as month themes -- planner falls back to the month theme, then the
-  // global default, whenever no planner-specific override is saved) ----
+  // ---- per-account planner background overrides (keyed by month index
+  // 0-11, same as month themes -- planner falls back to the month theme,
+  // then the global default, whenever no planner-specific override is
+  // saved) ----
   getPlannerMonthThemes() {
+    const synced = this._pref('plannerMonthThemes');
+    if (synced !== undefined) return synced;
     return readJSON('fc_plannerMonthThemes', {});
   },
   getPlannerMonthTheme(monthIndex) {
     return this.getPlannerMonthThemes()[monthIndex] || null;
   },
   setPlannerMonthTheme(monthIndex, theme) {
-    const themes = this.getPlannerMonthThemes();
+    const themes = { ...this.getPlannerMonthThemes() };
     if (theme) themes[monthIndex] = theme;
     else delete themes[monthIndex];
     writeJSON('fc_plannerMonthThemes', themes);
+    this._syncPref(this.getCurrentUserId(), 'plannerMonthThemes', themes);
   },
 
   // ---- todos/notes: synced via Firestore (like events), not localStorage,
@@ -1007,15 +1086,54 @@ const Store = {
     writeJSON(`fc_holidays_${userId}`, ids);
   },
   getHolidayColor(userId) {
+    const synced = this._pref('holidayColor');
+    if (synced !== undefined) return synced;
     return localStorage.getItem(`fc_holidayColor_${userId}`) || null;
   },
   saveHolidayColor(userId, color) {
     localStorage.setItem(`fc_holidayColor_${userId}`, color);
+    this._syncPref(userId, 'holidayColor', color);
   },
   getDefaultBirthdayColor(userId) {
+    const synced = this._pref('defaultBirthdayColor');
+    if (synced !== undefined) return synced;
     return localStorage.getItem(`fc_defaultBirthdayColor_${userId}`) || null;
   },
   saveDefaultBirthdayColor(userId, color) {
     localStorage.setItem(`fc_defaultBirthdayColor_${userId}`, color);
+    this._syncPref(userId, 'defaultBirthdayColor', color);
+  },
+
+  // One-time: seeds this ACCOUNT's Firestore-synced appearance preferences
+  // from whatever this device already has saved locally, the first time any
+  // device signs into this account after this feature shipped. Checks the
+  // real doc's existence on the server (not a local "migrated" flag) -- a
+  // flag can drift out of sync with reality (see migrateLocalNotesIfNeeded's
+  // own history) -- and this must run at most once per ACCOUNT, not once per
+  // device, so a second device signing in later never re-seeds and clobbers
+  // values a first device already synced and changed since.
+  async migrateLocalPreferencesIfNeeded(userId) {
+    const ref = firebase.firestore().collection('preferences').doc(userId);
+    try {
+      const doc = await ref.get();
+      if (doc.exists) return;
+      const seed = {
+        categoryOrder: readJSON(`fc_catOrder_${userId}`, []),
+        categoryColors: readJSON(`fc_catcolors_${userId}`, {}),
+        showEventColors: localStorage.getItem(`fc_showEventColors_${userId}`) !== '0',
+        eventTextMode: localStorage.getItem(`fc_eventTextMode_${userId}`) || 'colored',
+        personColors: readJSON(`fc_colors_${userId}`, {}),
+        eventColors: readJSON(`fc_eventcolors_${userId}`, {}),
+        theme: readJSON('fc_theme', this.getTheme()),
+        monthThemes: readJSON('fc_monthThemes', {}),
+        plannerMonthThemes: readJSON('fc_plannerMonthThemes', {}),
+        holidayColor: localStorage.getItem(`fc_holidayColor_${userId}`) || null,
+        defaultBirthdayColor: localStorage.getItem(`fc_defaultBirthdayColor_${userId}`) || null,
+      };
+      await ref.set(seed);
+      _cache.preferences = { ..._cache.preferences, ...seed };
+    } catch (err) {
+      console.warn('Preferences migration failed, will retry next sign-in:', err.code);
+    }
   },
 };

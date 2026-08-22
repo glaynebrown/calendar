@@ -522,14 +522,22 @@ const Settings = {
       function renderConnections() {
         const listEl = root.querySelector('#st-connections-list');
         listEl.innerHTML = '';
-        Store.getKnownPeople(userId).filter(p => p.id !== userId).forEach(p => {
+        // Household co-members are always connections too (that's what
+        // grants them visibility), but they're managed from the Household
+        // section above -- removing someone here would delete only the
+        // connection record, leaving their household spot and edit access
+        // dangling. Only plain, non-household connections belong in this list.
+        const householdMemberIds = new Set(
+          Store.getHouseholdsFor(userId).flatMap(h => h.memberIds).filter(id => id !== userId)
+        );
+        Store.getKnownPeople(userId).filter(p => p.id !== userId && !householdMemberIds.has(p.id)).forEach(p => {
           const row = document.createElement('div');
           row.className = 'color-swatch-row';
           const viewColor = Store.colorFor(userId, p.id);
           row.innerHTML = `
             <div class="color-swatch-row-left">
               <span class="avatar-color-wrap">
-                <span class="avatar-mini avatar-color-btn" style="background:${p.defaultColor}; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px ${viewColor};">${initials(p.name)}</span>
+                <span class="avatar-mini avatar-color-btn" style="background:${viewColor};">${initials(p.name)}</span>
                 <input type="color" class="avatar-color-input color-input-overlay" aria-label="Change ${escapeAttr(p.name)}'s color" value="${viewColor}">
               </span>
               <span>${p.name}</span>
@@ -539,7 +547,7 @@ const Settings = {
           const colorInput = row.querySelector('.avatar-color-input');
           colorInput.addEventListener('input', e => {
             Store.setColorForPerson(userId, p.id, e.target.value);
-            avatarBtn.style.boxShadow = `0 0 0 2px var(--surface), 0 0 0 4px ${e.target.value}`;
+            avatarBtn.style.background = e.target.value;
             Calendar.render();
           });
           const removeBtn = document.createElement('button');
@@ -593,10 +601,19 @@ const Settings = {
           const memberRows = h.memberIds.map(id => {
             const a = Store.getAccount(id);
             const isMe = id === userId;
+            const viewColor = isMe ? null : Store.colorFor(userId, id);
             return `
-              <div style="display:flex;align-items:center;justify-content:space-between;padding:2px 0;">
-                <span>${escapeAttr(a ? a.name : '?')}${isMe ? ' (you)' : ''}</span>
-                <button type="button" class="link-btn" data-member-action="${isMe ? 'leave' : 'remove'}" data-member-id="${id}" style="color:var(--text-danger,#c0392b);">${isMe ? 'Leave' : 'Remove'}</button>
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:2px 0;gap:8px;">
+                <span style="display:flex;align-items:center;gap:8px;min-width:0;">
+                  ${isMe ? '' : `
+                    <span class="avatar-color-wrap">
+                      <span class="avatar-mini avatar-color-btn" style="background:${viewColor};">${initials(a ? a.name : '?')}</span>
+                      <input type="color" class="avatar-color-input color-input-overlay" data-color-for="${id}" aria-label="Change ${escapeAttr(a ? a.name : '')}'s color" value="${viewColor}">
+                    </span>
+                  `}
+                  <span>${escapeAttr(a ? a.name : '?')}${isMe ? ' (you)' : ''}</span>
+                </span>
+                <button type="button" class="link-btn" data-member-action="${isMe ? 'leave' : 'remove'}" data-member-id="${id}" style="color:var(--text-danger,#c0392b); flex-shrink:0;">${isMe ? 'Leave' : 'Remove'}</button>
               </div>
             `;
           }).join('');
@@ -605,6 +622,13 @@ const Settings = {
             <div style="margin:0 0 8px;">${memberRows}</div>
             <button type="button" class="link-btn" data-action="connect">Copy invite link</button>
           `;
+          wrap.querySelectorAll('[data-color-for]').forEach(input => {
+            input.addEventListener('input', e => {
+              Store.setColorForPerson(userId, input.dataset.colorFor, e.target.value);
+              input.closest('.avatar-color-wrap').querySelector('.avatar-color-btn').style.background = e.target.value;
+              Calendar.render();
+            });
+          });
           wrap.querySelectorAll('[data-member-action]').forEach(btn => {
             btn.addEventListener('click', () => {
               const memberId = btn.dataset.memberId;

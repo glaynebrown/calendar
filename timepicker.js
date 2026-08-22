@@ -16,13 +16,28 @@ function to24Hour(h12, minute, ampm) {
   return `${String(h).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
 }
 
-function tpBuildColumn(id, items) {
-  return `<div class="tp-col" id="${id}">${items.map(v => `<div class="tp-item">${v}</div>`).join('')}</div>`;
+// Repeating the value list several times (for loop columns) gives room to
+// scroll several screens in either direction before ever visibly reaching
+// an edge; tpSetupColumn periodically re-centers back into the middle copy
+// well before that room runs out.
+const TP_LOOP_COPIES = 5;
+
+function tpBuildColumn(id, items, loop) {
+  const rendered = loop ? Array(TP_LOOP_COPIES).fill(items).flat() : items;
+  return `<div class="tp-col" id="${id}">${rendered.map(v => `<div class="tp-item">${v}</div>`).join('')}</div>`;
 }
 
-function tpSetupColumn(col, count, initialIndex, onSettle) {
-  col.scrollTop = initialIndex * TP_ROW_HEIGHT;
-  let current = initialIndex;
+// loop: wraps the column so scrolling past either end continues around
+// (12 -> 1, 59 -> 00) instead of stopping dead. Implemented by rendering
+// the value list repeated (see tpBuildColumn) and, once scrolling settles,
+// silently jumping back to the equivalent row in the middle copy -- an
+// un-animated scrollTop assignment, invisible since every copy renders the
+// same values at the same relative position, so nothing visibly moves.
+function tpSetupColumn(col, realCount, initialIndex, onSettle, loop) {
+  const totalCount = loop ? realCount * TP_LOOP_COPIES : realCount;
+  const middleOffset = loop ? realCount * Math.floor(TP_LOOP_COPIES / 2) : 0;
+  let current = middleOffset + initialIndex;
+  col.scrollTop = current * TP_ROW_HEIGHT;
 
   function refreshFade() {
     Array.from(col.children).forEach((item, i) => {
@@ -42,19 +57,33 @@ function tpSetupColumn(col, count, initialIndex, onSettle) {
 
   let settleTimer = null;
   col.addEventListener('scroll', () => {
-    const idx = Math.max(0, Math.min(count - 1, Math.round(col.scrollTop / TP_ROW_HEIGHT)));
+    const idx = Math.max(0, Math.min(totalCount - 1, Math.round(col.scrollTop / TP_ROW_HEIGHT)));
     if (idx !== current) { current = idx; refreshFade(); }
     clearTimeout(settleTimer);
     settleTimer = setTimeout(() => {
-      const settledIdx = Math.max(0, Math.min(count - 1, Math.round(col.scrollTop / TP_ROW_HEIGHT)));
+      const settledIdx = Math.max(0, Math.min(totalCount - 1, Math.round(col.scrollTop / TP_ROW_HEIGHT)));
       col.scrollTo({ top: settledIdx * TP_ROW_HEIGHT, behavior: 'smooth' });
       current = settledIdx;
       refreshFade();
-      onSettle(settledIdx);
+      const realIdx = settledIdx % realCount;
+      onSettle(realIdx);
+
+      if (loop) {
+        // Wait for the smooth snap above to finish before silently
+        // recentering -- jumping mid-animation would cut the snap short.
+        setTimeout(() => {
+          const recentered = middleOffset + realIdx;
+          if (recentered !== current) {
+            col.scrollTop = recentered * TP_ROW_HEIGHT;
+            current = recentered;
+            refreshFade();
+          }
+        }, 350);
+      }
     }, 120);
   }, { passive: true });
 
-  return { getIndex: () => current };
+  return { getIndex: () => (loop ? current % realCount : current) };
 }
 
 // currentValue: 'HH:MM' 24h string or null. onConfirm(value) called with 'HH:MM' or null (cleared).
@@ -77,8 +106,8 @@ function openTimePicker(currentValue, dateLabel, onConfirm) {
       <div class="time-picker-title" id="tp-title">${dateLabel ? dateLabel + ' – ' : ''}${formatTime12(to24Hour(h12Val, min, ampmVal))}</div>
       <div class="time-picker-columns">
         <div class="tp-highlight-band"></div>
-        ${tpBuildColumn('tp-hour', hours)}
-        ${tpBuildColumn('tp-min', minutes)}
+        ${tpBuildColumn('tp-hour', hours, true)}
+        ${tpBuildColumn('tp-min', minutes, true)}
         ${tpBuildColumn('tp-ampm', ampms)}
       </div>
       <div class="btn-row" style="padding:0 16px;">
@@ -98,8 +127,8 @@ function openTimePicker(currentValue, dateLabel, onConfirm) {
   const minCol = overlay.querySelector('#tp-min');
   const ampmCol = overlay.querySelector('#tp-ampm');
 
-  tpSetupColumn(hourCol, hours.length, h12Val - 1, idx => { h12Val = hours[idx]; refreshTitle(); });
-  tpSetupColumn(minCol, minutes.length, min, idx => { min = idx; refreshTitle(); });
+  tpSetupColumn(hourCol, hours.length, h12Val - 1, idx => { h12Val = hours[idx]; refreshTitle(); }, true);
+  tpSetupColumn(minCol, minutes.length, min, idx => { min = idx; refreshTitle(); }, true);
   tpSetupColumn(ampmCol, ampms.length, ampmVal === 'AM' ? 0 : 1, idx => { ampmVal = ampms[idx]; refreshTitle(); });
 
   function close() {

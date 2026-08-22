@@ -990,7 +990,14 @@ const Calendar = {
         row.type = 'button';
         row.className = 'week-event-row';
         row.style.borderLeftColor = color || '';
-        row.innerHTML = `<span class="week-event-title"${color ? ` style="color:${color};"` : ''}>${escapeHTML(ev.title)}</span>${ev.time ? `<span class="week-event-time">${formatEventTimeRange(ev)}</span>` : ''}`;
+        const participantNames = (ev.participantIds || [ev.ownerId]).map(id => (Store.getPerson(id) || {}).name).filter(Boolean).join(', ');
+        row.innerHTML = `
+          <div class="week-event-main">
+            <span class="week-event-title"${color ? ` style="color:${color};"` : ''}>${escapeHTML(ev.title)}</span>
+            ${ev.time ? `<span class="week-event-time">${formatEventTimeRange(ev)}</span>` : ''}
+          </div>
+          ${participantNames ? `<span class="week-event-participants">${escapeHTML(participantNames)}</span>` : ''}
+        `;
         row.addEventListener('click', e => {
           e.stopPropagation();
           if (ev.isBirthday || ev.isHoliday) this.openEventModal(birthdayHolidayStub(ev, ds), ds);
@@ -1065,9 +1072,11 @@ const Calendar = {
       row.className = 'week-event-row day-event-row';
       row.style.borderLeftColor = color || '';
       row.innerHTML = `
-        <span class="week-event-title"${color ? ` style="color:${color};"` : ''}>${escapeHTML(ev.title)}</span>
-        ${ev.time ? `<span class="week-event-time">${formatEventTimeRange(ev)}</span>` : ''}
-        ${participantNames ? `<span class="muted day-event-owner">${escapeHTML(participantNames)}</span>` : ''}
+        <div class="week-event-main">
+          <span class="week-event-title"${color ? ` style="color:${color};"` : ''}>${escapeHTML(ev.title)}</span>
+          ${ev.time ? `<span class="week-event-time">${formatEventTimeRange(ev)}</span>` : ''}
+        </div>
+        ${participantNames ? `<span class="week-event-participants">${escapeHTML(participantNames)}</span>` : ''}
       `;
       row.addEventListener('click', e => {
         e.stopPropagation();
@@ -1705,7 +1714,12 @@ const Calendar = {
       row.type = 'button';
       row.className = 'week-event-row';
       row.style.borderLeftColor = color || '';
-      row.innerHTML = `<span class="week-event-title"${color ? ` style="color:${color};"` : ''}>${escapeHTML(ev.title)}</span>${ev.time ? `<span class="week-event-time">${formatEventTimeRange(ev)}</span>` : ''}`;
+      row.innerHTML = `
+        <div class="week-event-main">
+          <span class="week-event-title"${color ? ` style="color:${color};"` : ''}>${escapeHTML(ev.title)}</span>
+          ${ev.time ? `<span class="week-event-time">${formatEventTimeRange(ev)}</span>` : ''}
+        </div>
+      `;
       row.addEventListener('click', () => {
         if (ev.isBirthday || ev.isHoliday) this.openEventModal(birthdayHolidayStub(ev, dateStr), dateStr);
         else this.openEventDetailModal(ev, dateStr);
@@ -2555,12 +2569,14 @@ const Calendar = {
           ev.attachment ? icon('paperclip') : '',
           ev.notes ? icon('notes') : '',
         ].filter(Boolean).join('');
+        const participantNames = (ev.participantIds || [ev.ownerId]).map(id => (Store.getPerson(id) || {}).name).filter(Boolean).join(', ');
         row.innerHTML = `
           ${(ev.isBirthday || ev.isHoliday) ? '' : `<button type="button" class="drag-handle" aria-label="Reorder event">${icon('grip')}</button>`}
           <button type="button" class="day-view-row-open">
             <div class="day-view-row-main">
               <span${color ? ` style="color:${color};"` : ''}>${escapeHTML(ev.title)}</span>${badges ? `<span class="day-view-row-badges">${badges}</span>` : ''}${timeLabel ? `<span class="muted" style="margin-left:auto;">${timeLabel}</span>` : ''}
             </div>
+            ${participantNames ? `<span class="week-event-participants">${escapeHTML(participantNames)}</span>` : ''}
           </button>
         `;
         row.querySelector('.day-view-row-open').addEventListener('click', () => {

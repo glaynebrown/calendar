@@ -2449,16 +2449,16 @@ const Calendar = {
         bar.textContent = ev.title;
         const color = this.colorForEvent(ev, userId);
         if (color) {
-          bar.style.background = color + '33';
+          bar.style.background = color + '22';
           bar.style.color = color;
         }
         bar.style.left = (rectStart.left - gridRect.left) + 'px';
         bar.style.width = (rectEnd.right - rectStart.left) + 'px';
         bar.style.top = (dayNumBottom - gridRect.top + 2 + stackIdx * BAR_SLOT) + 'px';
-        bar.style.borderTopLeftRadius = segStart === ev.date ? '6px' : '0';
-        bar.style.borderBottomLeftRadius = segStart === ev.date ? '6px' : '0';
-        bar.style.borderTopRightRadius = segEnd === ev.endDate ? '6px' : '0';
-        bar.style.borderBottomRightRadius = segEnd === ev.endDate ? '6px' : '0';
+        bar.style.borderTopLeftRadius = segStart === ev.date ? '4px' : '0';
+        bar.style.borderBottomLeftRadius = segStart === ev.date ? '4px' : '0';
+        bar.style.borderTopRightRadius = segEnd === ev.endDate ? '4px' : '0';
+        bar.style.borderBottomRightRadius = segEnd === ev.endDate ? '4px' : '0';
         bar.addEventListener('click', e => {
           e.stopPropagation();
           this.openEventModal(ev, ev.date);

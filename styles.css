@@ -652,6 +652,10 @@ html.text-white .month-label:hover {
 .btn-row .btn { flex: 1; }
 
 .color-swatch-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; }
+/* Same treatment as the day view's event-reorder dots (.day-view-row
+   .drag-handle) -- accent-colored and a bit more tappable than the plain
+   muted default, for consistency between the two reorderable lists. */
+.color-swatch-row .drag-handle { padding: 8px; flex-shrink: 0; color: var(--accent); }
 .color-swatch-row-left { display: flex; align-items: center; gap: 10px; font-size: 13px; }
 .avatar-mini { width: 26px; height: 26px; border-radius: 50%; background-size: cover; background-position: center; display: flex; align-items: center; justify-content: center; font-size: 10px; color: #fff; font-weight: 500; }
 .avatar-color-btn { border: none; padding: 0; cursor: pointer; font: inherit; flex-shrink: 0; }

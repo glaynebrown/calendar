@@ -116,6 +116,13 @@ const App = {
       Store.updateAccount(user.uid, { timezone: Intl.DateTimeFormat().resolvedOptions().timeZone });
     }
     Store.reconcileHouseholdTies(user.uid);
+    // A fresh app load (this whole function only runs once per real
+    // sign-in/cold-boot, not on routine in-app navigation -- see
+    // onAuthStateChanged's own comment) always starts on the chosen
+    // default view, regardless of whatever view was left active last time
+    // the app was open. Switching views still sticks for the rest of
+    // *this* session same as before -- only the next fresh open resets it.
+    Store.setActiveViewId(user.uid, Store.getDefaultViewId(user.uid));
     this.startApp();
     this.maybeHandleInvite();
   },

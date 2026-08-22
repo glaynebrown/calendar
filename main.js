@@ -78,20 +78,35 @@ const App = {
 
     Settings.init();
 
-    // Resets the active view back to the chosen default the moment the app
-    // is backgrounded, not when it's reopened -- resetting on reopen (e.g.
-    // in onSignedIn, tied to onAuthStateChanged firing fresh) only works
-    // for a genuine full page reload. On iOS in particular, "closing" and
-    // reopening the app very often just suspends and resumes the same page
-    // instance instead of actually reloading it, so that callback never
-    // fires again and the view never resets. Resetting on the way OUT
-    // instead means it doesn't matter which of those two actually happens
-    // next -- the saved view is already back to default either way by the
-    // time anyone looks at it again.
+    // Resets back to the chosen default the moment the app is backgrounded,
+    // not when it's reopened -- resetting on reopen (e.g. in onSignedIn,
+    // tied to onAuthStateChanged firing fresh) only works for a genuine full
+    // page reload. On iOS in particular, "closing" and reopening the app
+    // very often just suspends and resumes the same page instance instead
+    // of actually reloading it, so that callback never fires again and
+    // nothing ever resets. Resetting on the way OUT instead means it
+    // doesn't matter which of those two actually happens next -- everything
+    // is already back to default either way by the time anyone looks at it
+    // again. Three separate pieces of state all feed into "what's currently
+    // showing" (see getActiveFilter), and all three have to reset together
+    // or a leftover category filter / checklist selection would silently
+    // override the default view being restored:
+    //  - activeViewId: which named view (Everyone, Just Me, a custom one).
+    //  - viewMode: 'named' (use activeViewId) vs 'checklist' (use its own
+    //    live people/category selection instead, ignoring activeViewId
+    //    entirely) -- has to go back to 'named' or the default view
+    //    wouldn't even be consulted.
+    //  - categoryFilter: an independent "just show this one category"
+    //    dropdown layered on top of the named view -- picking one here
+    //    doesn't touch activeViewId at all, so it used to survive this
+    //    reset and keep filtering the default view down after reopening.
     document.addEventListener('visibilitychange', () => {
       if (!document.hidden) return;
       const userId = Store.getCurrentUserId();
-      if (userId) Store.setActiveViewId(userId, Store.getDefaultViewId(userId));
+      if (!userId) return;
+      Store.setActiveViewId(userId, Store.getDefaultViewId(userId));
+      Store.setViewMode(userId, 'named');
+      Store.setCategoryFilter(userId, '');
     });
 
     // Firebase persists the session itself -- this fires once immediately

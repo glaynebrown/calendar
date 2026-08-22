@@ -5,7 +5,10 @@ function formatDateShort(iso) {
 
 function formatDateRangeShort(startIso, endIso) {
   if (!endIso || endIso === startIso) return formatDateShort(startIso);
-  return `${formatDateShort(startIso)} – ${formatDateShort(endIso)}`;
+  // No weekday here (unlike formatDateShort) -- with both endpoints of a
+  // range, that's too long for the date button and runs off the edge.
+  const noWeekday = iso => parseISO(iso).toLocaleDateString('default', { month: 'short', day: 'numeric' });
+  return `${noWeekday(startIso)} – ${noWeekday(endIso)}`;
 }
 
 function formatDateNumeric(iso) {

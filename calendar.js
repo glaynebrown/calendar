@@ -2360,7 +2360,6 @@ const Calendar = {
     gridEl.innerHTML = '';
 
     const BAR_SLOT = 16;
-    const NUMBER_BAND = 17;
     const barCoverageByDate = {};
     gridDates.forEach(d => {
       const ds = formatISO(d);
@@ -2434,6 +2433,16 @@ const Calendar = {
         if (colStart === -1 || colEnd === -1) return;
         const rectStart = dayCellEls[w + colStart].getBoundingClientRect();
         const rectEnd = dayCellEls[w + colEnd].getBoundingClientRect();
+        // Measured from the actual day-number's rendered bottom edge (not a
+        // fixed guess) so this lines up correctly whether or not that cell
+        // is "today" -- the accent-colored today pill has the same box
+        // height as a plain day number, but a fixed offset here previously
+        // didn't account for the cell's own top padding, so bars always sat
+        // a few px too high, just imperceptibly so against a plain number.
+        // +2 mirrors the day-cell's own flex gap (1px above and below the
+        // bar-reserving spacer), so the last stacked bar and the first real
+        // event chip end up the same 1px apart as everything else in the cell.
+        const dayNumBottom = dayCellEls[w + colStart].querySelector('.day-num').getBoundingClientRect().bottom;
 
         const bar = document.createElement('div');
         bar.className = 'multiday-bar';
@@ -2445,7 +2454,7 @@ const Calendar = {
         }
         bar.style.left = (rectStart.left - gridRect.left) + 'px';
         bar.style.width = (rectEnd.right - rectStart.left) + 'px';
-        bar.style.top = (rectStart.top - gridRect.top + NUMBER_BAND + stackIdx * BAR_SLOT) + 'px';
+        bar.style.top = (dayNumBottom - gridRect.top + 2 + stackIdx * BAR_SLOT) + 'px';
         bar.style.borderTopLeftRadius = segStart === ev.date ? '6px' : '0';
         bar.style.borderBottomLeftRadius = segStart === ev.date ? '6px' : '0';
         bar.style.borderTopRightRadius = segEnd === ev.endDate ? '6px' : '0';

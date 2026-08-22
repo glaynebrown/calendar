@@ -428,9 +428,24 @@ const Calendar = {
     // getBirthdayOccurrences/getHolidayOccurrences) -- real events never
     // have this field at all, so this is a no-op for them.
     if (ev.color) return ev.color;
-    return (ev.ownerId === userId && ev.category)
-      ? Store.categoryColorFor(userId, ev.category)
-      : Store.colorFor(userId, ev.ownerId);
+    // A category only overrides the owner's own color if it actually has
+    // one set -- categories no longer auto-assign a color just by
+    // existing (see Store.categoryColorFor), specifically so a shared
+    // category like "Appointments" can group everyone's events together
+    // for filtering while each person's own still shows in their own color.
+    if (ev.ownerId === userId && ev.category) {
+      const catColor = Store.categoryColorFor(userId, ev.category);
+      if (catColor) return catColor;
+    }
+    return Store.colorFor(userId, ev.ownerId);
+  },
+
+  // A category dot: the category's own color if it has one, or a neutral
+  // outlined placeholder (same "nothing chosen" look used for custom event
+  // colors elsewhere) if it doesn't -- an invalid `background:null` would
+  // otherwise just render as an invisible dot.
+  catDotStyle(color) {
+    return color ? `background:${color};` : 'background:transparent; border:1.5px solid var(--border-strong);';
   },
 
   // Month view only (day chips + multi-day bars): applies `color` as either
@@ -582,7 +597,7 @@ const Calendar = {
       const btn = document.createElement('button');
       btn.className = 'menu-item' + (activeCategory === cat ? ' selected' : '');
       const dotColor = Store.categoryColorFor(userId, cat);
-      btn.innerHTML = `<span class="menu-item-inner"><span class="cat-dot" style="background:${dotColor}"></span>${escapeAttr(cat)}</span>`;
+      btn.innerHTML = `<span class="menu-item-inner"><span class="cat-dot" style="${this.catDotStyle(dotColor)}"></span>${escapeAttr(cat)}</span>`;
       btn.addEventListener('click', () => { Store.setCategoryFilter(userId, cat); menu.classList.add('hidden'); this.render(); });
 
       const editBtn = document.createElement('button');
@@ -645,7 +660,7 @@ const Calendar = {
       label.className = 'menu-item checklist-item';
       const checked = filter.categories.length === 0 || filter.categories.includes(cat);
       const dotColor = Store.categoryColorFor(userId, cat);
-      label.innerHTML = `<input type="checkbox" ${checked ? 'checked' : ''}><span class="menu-item-inner"><span class="cat-dot" style="background:${dotColor}"></span>${escapeAttr(cat)}</span>`;
+      label.innerHTML = `<input type="checkbox" ${checked ? 'checked' : ''}><span class="menu-item-inner"><span class="cat-dot" style="${this.catDotStyle(dotColor)}"></span>${escapeAttr(cat)}</span>`;
       label.querySelector('input').addEventListener('change', e => {
         const current = Store.getChecklistFilter(userId);
         const allCats = Store.getCategories();
@@ -742,6 +757,7 @@ const Calendar = {
 
   openEditCategoryModal(cat) {
     const userId = Store.getCurrentUserId();
+    const initialColor = Store.categoryColorFor(userId, cat);
 
     const body = `
       <div class="modal-header"><h2>Edit category</h2><button class="modal-close" id="ec-close">${icon('x')}</button></div>
@@ -751,7 +767,17 @@ const Calendar = {
       </div>
       <div class="field">
         <label>Color</label>
-        <input type="color" id="ec-color" class="color-box" value="${Store.categoryColorFor(userId, cat)}">
+        <p class="muted" style="margin-top:-2px;">Optional -- leave unset and events in this category keep showing in each person's own color instead, so you can still filter by category without losing track of whose is whose.</p>
+        <div style="display:flex; gap:6px;">
+          <span class="color-field-wrap">
+            <button type="button" class="time-field-btn${initialColor ? '' : ' placeholder'}" id="ec-color-btn" style="width:100%;">
+              <span class="tf-text">${initialColor ? 'Change color' : 'No color (use person color)'}</span>
+              <span class="cat-dot" id="ec-color-dot" style="margin-left:auto; ${this.catDotStyle(initialColor)}"></span>
+            </button>
+            <input type="color" id="ec-color-swatch" class="color-input-overlay" aria-label="Change category color" value="${initialColor || '#71816C'}">
+          </span>
+          <button type="button" class="icon-btn${initialColor ? '' : ' hidden'}" id="ec-color-clear" aria-label="Remove category color">${icon('x')}</button>
+        </div>
       </div>
       <div class="btn-row">
         <button class="btn btn-danger" id="ec-delete">Delete category</button>
@@ -762,12 +788,33 @@ const Calendar = {
     openModal(body, root => {
       root.querySelector('#ec-close').addEventListener('click', closeModal);
 
+      let colorVal = initialColor;
+      const colorBtn = root.querySelector('#ec-color-btn');
+      const colorDot = root.querySelector('#ec-color-dot');
+      const colorSwatch = root.querySelector('#ec-color-swatch');
+      const colorClearBtn = root.querySelector('#ec-color-clear');
+      function refreshColorBtn() {
+        colorDot.setAttribute('style', `margin-left:auto; ${Calendar.catDotStyle(colorVal)}`);
+        colorBtn.querySelector('.tf-text').textContent = colorVal ? 'Change color' : 'No color (use person color)';
+        colorBtn.classList.toggle('placeholder', !colorVal);
+        colorClearBtn.classList.toggle('hidden', !colorVal);
+      }
+      colorSwatch.addEventListener('input', () => {
+        colorVal = colorSwatch.value;
+        refreshColorBtn();
+      });
+      colorClearBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        colorVal = null;
+        refreshColorBtn();
+      });
+
       root.querySelector('#ec-save').addEventListener('click', () => {
         const newName = root.querySelector('#ec-name').value.trim();
-        const newColor = root.querySelector('#ec-color').value;
         const finalName = newName || cat;
         if (newName && newName !== cat) Store.renameCategory(cat, newName);
-        Store.setCategoryColor(userId, finalName, newColor);
+        if (colorVal) Store.setCategoryColor(userId, finalName, colorVal);
+        else Store.clearCategoryColor(userId, finalName);
         closeModal();
         Calendar.render();
       });
@@ -2877,7 +2924,7 @@ const Calendar = {
     `);
     if (event.category) rows.push(`
       <div class="detail-row">
-        <span class="cat-dot" style="background:${Store.categoryColorFor(userId, event.category)}; margin-top:5px;"></span>
+        <span class="cat-dot" style="${this.catDotStyle(Store.categoryColorFor(userId, event.category))} margin-top:5px;"></span>
         <div class="detail-row-content">${escapeHTML(event.category)}</div>
       </div>
     `);
@@ -3053,11 +3100,11 @@ const Calendar = {
         <div class="field" id="ev-category-field">
           <label>Category</label>
           <button type="button" class="time-field-btn${event && event.category ? '' : ' placeholder'}" id="ev-category-btn">
-            ${event && event.category ? `<span class="cat-dot" style="background:${Store.categoryColorFor(userId, event.category)}"></span>` : ''}
+            ${event && event.category ? `<span class="cat-dot" style="${this.catDotStyle(Store.categoryColorFor(userId, event.category))}"></span>` : ''}
             <span class="tf-text">${event && event.category ? escapeHTML(event.category) : 'No category'}</span>
           </button>
           <div id="ev-category-menu" class="repeat-menu hidden">
-            ${categories.map(c => `<button type="button" class="menu-item" data-val="${escapeAttr(c)}"><span class="menu-item-inner"><span class="cat-dot" style="background:${Store.categoryColorFor(userId, c)}"></span>${escapeHTML(c)}</span></button>`).join('')}
+            ${categories.map(c => `<button type="button" class="menu-item" data-val="${escapeAttr(c)}"><span class="menu-item-inner"><span class="cat-dot" style="${this.catDotStyle(Store.categoryColorFor(userId, c))}"></span>${escapeHTML(c)}</span></button>`).join('')}
             ${categories.length ? '<div class="menu-divider"></div>' : ''}
             <button type="button" class="menu-item" id="ev-category-clear">No category</button>
             <div style="display:flex; gap:6px; padding:6px 10px 4px;">
@@ -3196,18 +3243,21 @@ const Calendar = {
         titleSuggestions.innerHTML = '';
       }
       if (!isEdit) {
-        const allPresets = Store.getEventPresets(userId);
+        let allPresets = Store.getEventPresets(userId);
         // A tap inside the suggestion list would otherwise blur the title
         // input first, closing the list before its click handler ever runs.
         titleSuggestions.addEventListener('mousedown', e => e.preventDefault());
-        titleInput.addEventListener('input', () => {
+        function renderTitleSuggestions() {
           const q = titleInput.value.trim().toLowerCase();
-          const exact = allPresets.find(p => p.title.toLowerCase() === q);
-          if (exact) applyPresetFields(exact);
           if (!q) { hideTitleSuggestions(); return; }
           const matches = allPresets.filter(p => p.title.toLowerCase().includes(q)).slice(0, 8);
           if (!matches.length) { hideTitleSuggestions(); return; }
-          titleSuggestions.innerHTML = matches.map(p => `<button type="button" class="menu-item" data-id="${p.id}">${escapeHTML(p.title)}</button>`).join('');
+          titleSuggestions.innerHTML = matches.map(p => `
+            <div class="menu-item-row">
+              <button type="button" class="menu-item" data-id="${p.id}">${escapeHTML(p.title)}</button>
+              <button type="button" class="icon-btn" data-delete-id="${p.id}" aria-label="Delete preset ${escapeAttr(p.title)}">${icon('x')}</button>
+            </div>
+          `).join('');
           titleSuggestions.classList.remove('hidden');
           titleSuggestions.querySelectorAll('.menu-item').forEach(btn => {
             btn.addEventListener('click', () => {
@@ -3217,6 +3267,20 @@ const Calendar = {
               hideTitleSuggestions();
             });
           });
+          titleSuggestions.querySelectorAll('[data-delete-id]').forEach(delBtn => {
+            delBtn.addEventListener('click', e => {
+              e.stopPropagation();
+              Store.deleteEventPreset(userId, delBtn.dataset.deleteId);
+              allPresets = Store.getEventPresets(userId);
+              renderTitleSuggestions();
+            });
+          });
+        }
+        titleInput.addEventListener('input', () => {
+          const q = titleInput.value.trim().toLowerCase();
+          const exact = allPresets.find(p => p.title.toLowerCase() === q);
+          if (exact) applyPresetFields(exact);
+          renderTitleSuggestions();
         });
         titleInput.addEventListener('blur', hideTitleSuggestions);
       }
@@ -3375,7 +3439,7 @@ const Calendar = {
       const categoryBtn = root.querySelector('#ev-category-btn');
       const categoryMenu = root.querySelector('#ev-category-menu');
       function refreshCategoryBtn() {
-        const dot = categoryVal ? `<span class="cat-dot" style="background:${Store.categoryColorFor(userId, categoryVal)}"></span>` : '';
+        const dot = categoryVal ? `<span class="cat-dot" style="${Calendar.catDotStyle(Store.categoryColorFor(userId, categoryVal))}"></span>` : '';
         categoryBtn.innerHTML = `${dot}<span class="tf-text">${categoryVal ? escapeHTML(categoryVal) : 'No category'}</span>`;
         categoryBtn.classList.toggle('placeholder', !categoryVal);
       }

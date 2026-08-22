@@ -564,12 +564,25 @@ const Store = {
     map[category] = color;
     writeJSON(`fc_catcolors_${userId}`, map);
   },
-  categoryColorFor(userId, category) {
+  // Explicitly un-sets a category's color, back to "no color of its own" --
+  // distinct from setCategoryColor(..., null), which would still work the
+  // same way, but this reads clearer at call sites that mean "clear it".
+  clearCategoryColor(userId, category) {
     const map = this.getCategoryColorMap(userId);
-    if (map[category]) return map[category];
-    const cats = this.getCategories();
-    const idx = cats.indexOf(category);
-    return DEFAULT_COLORS[(idx >= 0 ? idx : 0) % DEFAULT_COLORS.length];
+    delete map[category];
+    writeJSON(`fc_catcolors_${userId}`, map);
+  },
+  // A category has a color ONLY if you explicitly picked one -- no more
+  // auto-assigning from DEFAULT_COLORS just because it exists. That auto-
+  // assignment used to mean a category's color always beat the event
+  // owner's own color (see colorForEvent), so "Appointments" for you and
+  // "Appointments" for Nick always looked identical regardless of who it
+  // belonged to -- there was no way to group by category while still
+  // telling whose is whose at a glance. Returning null here for an
+  // unset category lets colorForEvent fall back to the owner's own color
+  // instead, while the category itself still works fine as a filter.
+  categoryColorFor(userId, category) {
+    return this.getCategoryColorMap(userId)[category] || null;
   },
 
   // ---- per-user views (private -- only ever read/written for the current
@@ -964,6 +977,9 @@ const Store = {
   },
   saveEventPresets(userId, list) {
     writeJSON(`fc_eventPresets_${userId}`, list);
+  },
+  deleteEventPreset(userId, presetId) {
+    this.saveEventPresets(userId, this.getEventPresets(userId).filter(p => p.id !== presetId));
   },
 
   // ---- holidays (a personal display preference, not shared data -- just

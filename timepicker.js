@@ -72,10 +72,19 @@ function tpSetupColumn(col, realCount, initialIndex, onSettle, loop) {
   });
 
   let settleTimer = null;
+  let recenterTimer = null;
   col.addEventListener('scroll', () => {
     const idx = Math.max(0, Math.min(totalCount - 1, Math.round(col.scrollTop / TP_ROW_HEIGHT)));
     if (idx !== current) { const prev = current; current = idx; refreshFade(prev); }
     clearTimeout(settleTimer);
+    // A pending recenter is a plain, un-animated scrollTop jump (see below)
+    // timed for well after the *previous* settle -- if a new scroll (a
+    // second flick right after the first) starts before that timer fires,
+    // it's now aimed at a position that's stale relative to whatever the
+    // user is actively doing, and firing anyway yanks the column mid-
+    // gesture. Cancel it here, same as settleTimer, so only a genuinely
+    // idle column ever gets silently recentered.
+    clearTimeout(recenterTimer);
     settleTimer = setTimeout(() => {
       const settledIdx = Math.max(0, Math.min(totalCount - 1, Math.round(col.scrollTop / TP_ROW_HEIGHT)));
       col.scrollTo({ top: settledIdx * TP_ROW_HEIGHT, behavior: 'smooth' });
@@ -88,7 +97,7 @@ function tpSetupColumn(col, realCount, initialIndex, onSettle, loop) {
       if (loop) {
         // Wait for the smooth snap above to finish before silently
         // recentering -- jumping mid-animation would cut the snap short.
-        setTimeout(() => {
+        recenterTimer = setTimeout(() => {
           const recentered = middleOffset + realIdx;
           if (recentered !== current) {
             col.scrollTop = recentered * TP_ROW_HEIGHT;

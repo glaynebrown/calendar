@@ -766,6 +766,24 @@ const Store = {
     return person ? person.defaultColor : '#888787';
   },
 
+  // ---- per-user, per-event custom color (like the person color map above,
+  // but for a specific event) -- deliberately local/per-device rather than a
+  // field on the event doc itself, so setting a custom color on a shared
+  // event only changes how it looks on your own calendar. Anyone else who
+  // can edit the event is free to pick their own color for it too, without
+  // overwriting or being overwritten by yours. ----
+  getEventColorMap(userId) {
+    return readJSON(`fc_eventcolors_${userId}`, {});
+  },
+  setEventColor(userId, eventId, color) {
+    const map = this.getEventColorMap(userId);
+    if (color) map[eventId] = color; else delete map[eventId];
+    writeJSON(`fc_eventcolors_${userId}`, map);
+  },
+  eventColorFor(userId, eventId) {
+    return this.getEventColorMap(userId)[eventId] || null;
+  },
+
   // ---- per-device theme ----
   getTheme() {
     return readJSON('fc_theme', { font: 'Inter', bgColor: null, bgPhoto: null, bgFit: 'fit', bgAutoColor: null, bgBorderColor: null, bgThroughGrid: false, textColor: null, accent: '#71816C', colorMode: 'light' });
@@ -850,5 +868,11 @@ const Store = {
   },
   saveHolidayColor(userId, color) {
     localStorage.setItem(`fc_holidayColor_${userId}`, color);
+  },
+  getDefaultBirthdayColor(userId) {
+    return localStorage.getItem(`fc_defaultBirthdayColor_${userId}`) || null;
+  },
+  saveDefaultBirthdayColor(userId, color) {
+    localStorage.setItem(`fc_defaultBirthdayColor_${userId}`, color);
   },
 };

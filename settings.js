@@ -300,9 +300,8 @@ const Settings = {
         ${knownPeople.length ? '<p class="muted">Tap someone\'s icon to change the color you see them as.</p>' : ''}
         <div id="st-connections-list"></div>
         ${knownPeople.length === 0 ? '<p class="muted">No connections yet.</p>' : ''}
-        <p class="muted" style="margin-top:10px;">Send this link to anyone you want to connect with:</p>
-        <div class="field-row">
-          <input type="text" id="st-my-invite-link" readonly style="flex:1;">
+        <div class="field-row" style="align-items:center; margin-top:10px;">
+          <p class="muted" style="margin:0; flex:1;">Copy and send this link to anyone you want to connect with:</p>
           <button class="btn" id="st-copy-invite">Copy</button>
         </div>
         <button type="button" class="link-btn" id="st-revoke-invite">Revoke and get a new link</button>
@@ -566,13 +565,14 @@ const Settings = {
       }
       renderConnections();
 
-      const inviteLinkInput = root.querySelector('#st-my-invite-link');
-      Store.getOrCreateInvite('individual_connect', userId).then(code => { inviteLinkInput.value = inviteUrl(code); });
-      root.querySelector('#st-copy-invite').addEventListener('click', () => copyToClipboard(inviteLinkInput.value));
+      let currentInviteCode = null;
+      Store.getOrCreateInvite('individual_connect', userId).then(code => { currentInviteCode = code; });
+      root.querySelector('#st-copy-invite').addEventListener('click', () => {
+        if (currentInviteCode) copyToClipboard(inviteUrl(currentInviteCode));
+      });
       root.querySelector('#st-revoke-invite').addEventListener('click', async () => {
-        const current = inviteLinkInput.value.split('invite=')[1];
-        if (current) await Store.revokeInvite(current);
-        inviteLinkInput.value = inviteUrl(await Store.getOrCreateInvite('individual_connect', userId));
+        if (currentInviteCode) await Store.revokeInvite(currentInviteCode);
+        currentInviteCode = await Store.getOrCreateInvite('individual_connect', userId);
       });
 
       root.querySelector('#st-accept-code-btn').addEventListener('click', async () => {

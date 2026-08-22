@@ -358,6 +358,10 @@ const Calendar = {
   getBirthdayOccurrences(dateStr, peopleIds) {
     const [y, m, d] = dateStr.split('-').map(Number);
     const eventIds = new Set(Store.getEvents().map(e => e.id));
+    // A birthday left at "no color chosen" tracks this live -- if you
+    // change your default birthday color later, every birthday that was
+    // never individually customized picks up the new default automatically.
+    const defaultColor = Store.getDefaultBirthdayColor(Store.getCurrentUserId()) || HOLIDAY_COLOR;
     return peopleIds
       .flatMap(ownerId => Store.getBirthdays(ownerId).map(b => ({ ...b, ownerId })))
       .filter(b => b.month === m && b.day === d)
@@ -371,7 +375,7 @@ const Calendar = {
         birthdayId: b.id,
         ownerId: b.ownerId,
         isBirthday: true,
-        color: b.color || null,
+        color: b.color || defaultColor,
         category: null,
         time: null,
         date: dateStr,
@@ -412,6 +416,11 @@ const Calendar = {
   // render site falls back to plain, uncolored text.
   colorForEvent(ev, userId) {
     if (!Store.getShowEventColors(userId)) return null;
+    const override = Store.eventColorFor(userId, ev.id);
+    if (override) return override;
+    // Birthdays/holidays carry their own resolved color already (see
+    // getBirthdayOccurrences/getHolidayOccurrences) -- real events never
+    // have this field at all, so this is a no-op for them.
     if (ev.color) return ev.color;
     return (ev.ownerId === userId && ev.category)
       ? Store.categoryColorFor(userId, ev.category)
@@ -862,6 +871,7 @@ const Calendar = {
           Calendar.currentMonth = new Date(d.getFullYear(), d.getMonth(), 1);
           panel.classList.add('hidden');
           Calendar.render();
+          Calendar.openEventDetailModal(ev, displayDate);
         });
         resultsEl.appendChild(item);
       });
@@ -2606,7 +2616,11 @@ const Calendar = {
 
     const body = `
       <div class="modal-header"><h2>Birthdays</h2><button class="modal-close" id="bd-close">${icon('x')}</button></div>
-      <p class="muted">Visible to your connections on the calendar.</p>
+      <p class="muted">Private to you, unless you tap one on the calendar and add participants.</p>
+      <div class="field-row" style="align-items:center; margin-bottom:14px;">
+        <input type="color" id="bd-default-color" class="color-box" value="${Store.getDefaultBirthdayColor(userId) || HOLIDAY_COLOR}">
+        <span class="muted">Default birthday color</span>
+      </div>
       <div id="bd-list"></div>
       <div id="bd-form-wrap"></div>
       <button type="button" class="btn" id="bd-add-btn" style="width:100%;margin-top:8px;">+ Add birthday</button>
@@ -2617,6 +2631,12 @@ const Calendar = {
       const formWrap = root.querySelector('#bd-form-wrap');
       const addBtn = root.querySelector('#bd-add-btn');
 
+      root.querySelector('#bd-default-color').addEventListener('input', e => {
+        Store.saveDefaultBirthdayColor(userId, e.target.value);
+        renderList();
+        Calendar.render();
+      });
+
       function closeForm() {
         formWrap.innerHTML = '';
         addBtn.classList.remove('hidden');
@@ -2625,15 +2645,14 @@ const Calendar = {
       function renderForm(existing) {
         addBtn.classList.add('hidden');
         formWrap.innerHTML = `
-          <div class="field"><input type="text" id="bd-name" placeholder="Name" value="${existing ? escapeAttr(existing.name) : ''}"></div>
-          <div class="field-row">
-            <select id="bd-month">${MONTH_OPTIONS}</select>
-            <select id="bd-day">${DAY_OPTIONS}</select>
-            <input type="number" id="bd-year" placeholder="Year (optional)">
-          </div>
           <div class="field-row" style="align-items:center;">
-            <input type="color" id="bd-color" class="color-box" value="${(existing && existing.color) || HOLIDAY_COLOR}">
-            <button type="button" class="link-btn" id="bd-color-clear">Use their usual color</button>
+            <div class="field"><input type="text" id="bd-name" placeholder="Name" value="${existing ? escapeAttr(existing.name) : ''}"></div>
+            <input type="color" id="bd-color" value="${(existing && existing.color) || Store.getDefaultBirthdayColor(userId) || HOLIDAY_COLOR}">
+          </div>
+          <div class="field-row">
+            <div class="field"><select id="bd-month">${MONTH_OPTIONS}</select></div>
+            <div class="field"><select id="bd-day">${DAY_OPTIONS}</select></div>
+            <div class="field"><input type="number" id="bd-year" placeholder="Year (optional)"></div>
           </div>
           <div class="btn-row">
             ${existing ? `<button class="btn btn-danger" id="bd-delete">Delete</button>` : ''}
@@ -2644,13 +2663,13 @@ const Calendar = {
         formWrap.querySelector('#bd-month').value = existing ? existing.month : new Date().getMonth() + 1;
         formWrap.querySelector('#bd-day').value = existing ? existing.day : new Date().getDate();
         if (existing && existing.year) formWrap.querySelector('#bd-year').value = existing.year;
+        // Starts null (tracking the live default birthday color) unless
+        // this birthday already has its own explicit color, or the picker
+        // is actually touched below -- the swatch still shows the current
+        // default as a starting preview, but that's cosmetic until changed.
         let chosenColor = existing ? existing.color || null : null;
         const colorInput = formWrap.querySelector('#bd-color');
         colorInput.addEventListener('input', e => { chosenColor = e.target.value; });
-        formWrap.querySelector('#bd-color-clear').addEventListener('click', () => {
-          chosenColor = null;
-          colorInput.value = HOLIDAY_COLOR;
-        });
 
         formWrap.querySelector('#bd-cancel').addEventListener('click', closeForm);
         if (existing) {
@@ -2686,7 +2705,7 @@ const Calendar = {
           row.type = 'button';
           row.className = 'menu-item-row birthday-row';
           row.innerHTML = `
-            <span class="icon-btn" style="pointer-events:none; color:${b.color || 'inherit'};">${icon('cake')}</span>
+            <span class="icon-btn" style="pointer-events:none; color:${b.color || Store.getDefaultBirthdayColor(userId) || HOLIDAY_COLOR};">${icon('cake')}</span>
             <span style="flex:1; text-align:left;">${escapeHTML(b.name)} - ${MONTH_NAMES[b.month - 1]} ${b.day}${b.year ? ', ' + b.year : ''}</span>
           `;
           row.addEventListener('click', () => renderForm(b));
@@ -2705,7 +2724,7 @@ const Calendar = {
     const userId = Store.getCurrentUserId();
     const body = `
       <div class="modal-header"><h2>Holidays</h2><button class="modal-close" id="hol-close">${icon('x')}</button></div>
-      <p class="muted">Choose which holidays show up on your calendar.</p>
+      <p class="muted">Choose which holidays show up on your calendar -- private to you, unless you tap one and add participants.</p>
       <div class="field-row" style="align-items:center; margin-bottom:14px;">
         <input type="color" id="hol-color" class="color-box" value="${Store.getHolidayColor(userId) || HOLIDAY_COLOR}">
         <span class="muted">Color for holidays on your calendar</span>
@@ -2831,6 +2850,7 @@ const Calendar = {
       if (currentOwner) editablePeople.push(currentOwner);
     }
     const initialParticipantIds = event ? (event.participantIds || [event.ownerId]) : [userId];
+    const initialColorVal = event ? (Store.eventColorFor(userId, event.id) || event.color || null) : null;
     const categories = Store.getCategories();
     // Distinct from "event is truthy" -- a birthday/holiday stub carries a
     // pre-filled event object for its first tap, but nothing's actually
@@ -2928,7 +2948,7 @@ const Calendar = {
           <div id="ev-category-menu" class="repeat-menu hidden">
             ${categories.map(c => `<button type="button" class="menu-item" data-val="${escapeAttr(c)}"><span class="menu-item-inner"><span class="cat-dot" style="background:${Store.categoryColorFor(userId, c)}"></span>${escapeHTML(c)}</span></button>`).join('')}
             ${categories.length ? '<div class="menu-divider"></div>' : ''}
-            ${event && event.category ? `<button type="button" class="menu-item" id="ev-category-clear">No category</button>` : ''}
+            <button type="button" class="menu-item" id="ev-category-clear">No category</button>
             <div style="display:flex; gap:6px; padding:6px 10px 4px;">
               <input type="text" id="ev-category-new" placeholder="New category" style="flex:1; padding:6px 8px; border-radius:8px; border:0.5px solid var(--border-strong); background:var(--surface-2); color:var(--text); font-size:16px;">
               <button type="button" class="btn" style="padding:4px 10px;" id="ev-category-new-add">Add</button>
@@ -2937,11 +2957,14 @@ const Calendar = {
         </div>
         <div class="field" id="ev-color-field">
           <label>Custom Color</label>
-          <button type="button" class="time-field-btn${event && event.color ? '' : ' placeholder'}" id="ev-color-btn">
-            <span class="tf-text">Change color</span>
-            <span class="cat-dot" id="ev-color-dot" style="margin-left:auto; ${event && event.color ? `background:${event.color};` : 'background:transparent; border:1.5px solid var(--border-strong);'}"></span>
-          </button>
-          <input type="color" id="ev-color-swatch" value="${event && event.color ? event.color : '#71816C'}" tabindex="-1" style="position:absolute; width:1px; height:1px; opacity:0; pointer-events:none;">
+          <div style="display:flex; gap:6px;">
+            <button type="button" class="time-field-btn${initialColorVal ? '' : ' placeholder'}" id="ev-color-btn" style="flex:1;">
+              <span class="tf-text">Change color</span>
+              <span class="cat-dot" id="ev-color-dot" style="margin-left:auto; ${initialColorVal ? `background:${initialColorVal};` : 'background:transparent; border:1.5px solid var(--border-strong);'}"></span>
+            </button>
+            <button type="button" class="icon-btn${initialColorVal ? '' : ' hidden'}" id="ev-color-clear" aria-label="Remove custom color">${icon('x')}</button>
+          </div>
+          <input type="color" id="ev-color-swatch" value="${initialColorVal || '#71816C'}" tabindex="-1" style="position:absolute; width:1px; height:1px; opacity:0; pointer-events:none;">
         </div>
       </div>
       <div class="field">
@@ -3042,6 +3065,7 @@ const Calendar = {
             timeEndBtn.classList.remove('placeholder');
           }
           if (match.category) { categoryVal = match.category; refreshCategoryBtn(); }
+          if (match.color) { colorVal = match.color; refreshColorBtn(); }
         });
       }
 
@@ -3052,7 +3076,7 @@ const Calendar = {
         const category = categoryVal;
         const presets = Store.getEventPresets(userId);
         const idx = presets.findIndex(p => p.title.toLowerCase() === title.toLowerCase());
-        const preset = { id: idx >= 0 ? presets[idx].id : uid(), title, time: startTimeVal, endTime: endTimeVal, category };
+        const preset = { id: idx >= 0 ? presets[idx].id : uid(), title, time: startTimeVal, endTime: endTimeVal, category, color: colorVal };
         if (idx >= 0) presets[idx] = preset; else presets.push(preset);
         Store.saveEventPresets(userId, presets);
         savePresetBtn.textContent = 'Saved!';
@@ -3192,22 +3216,22 @@ const Calendar = {
         categoryBtn.innerHTML = `${dot}<span class="tf-text">${categoryVal ? escapeHTML(categoryVal) : 'No category'}</span>`;
         categoryBtn.classList.toggle('placeholder', !categoryVal);
       }
-      // Category and custom color are mutually exclusive -- colorForEvent()
-      // already treats a custom color as an override that trumps category,
-      // so picking one here clears and disables the other rather than
-      // leaving a category set that silently has no visual effect.
+      // Category (an organizational tag, used for filtering) and custom
+      // color (a personal display preference) are independent -- picking
+      // one no longer clears the other. colorForEvent() still prefers a
+      // custom color over the category's color when both are set, so
+      // e.g. a "work" event can be tagged for filtering and still show in
+      // whatever color you personally picked for it.
       function selectCategory(name) {
         categoryVal = name;
         categoryMenu.classList.add('hidden');
         refreshCategoryBtn();
-        if (name) { colorVal = null; refreshColorBtn(); setColorEnabled(false); }
       }
       categoryBtn.addEventListener('click', () => categoryMenu.classList.toggle('hidden'));
       categoryMenu.querySelectorAll('.menu-item[data-val]').forEach(mi => {
         mi.addEventListener('click', () => selectCategory(mi.dataset.val));
       });
-      const categoryClearBtn = categoryMenu.querySelector('#ev-category-clear');
-      if (categoryClearBtn) categoryClearBtn.addEventListener('click', () => selectCategory(null));
+      categoryMenu.querySelector('#ev-category-clear').addEventListener('click', () => selectCategory(null));
       function commitNewCategory() {
         const input = categoryMenu.querySelector('#ev-category-new');
         const name = input.value.trim();
@@ -3232,38 +3256,36 @@ const Calendar = {
         });
       });
 
-      let colorVal = event && event.color ? event.color : null;
+      // Local to this viewer, not a field on the event itself -- see
+      // Store.eventColorFor. Falls back to a birthday/holiday stub's own
+      // color (see birthdayHolidayStub) so first-time enrichment still
+      // starts pre-filled with that birthday/holiday's usual color.
+      let colorVal = initialColorVal;
       const colorBtn = root.querySelector('#ev-color-btn');
       const colorDot = root.querySelector('#ev-color-dot');
+      const colorClearBtn = root.querySelector('#ev-color-clear');
       const colorSwatch = root.querySelector('#ev-color-swatch');
       function refreshColorBtn() {
         colorDot.style.background = colorVal || 'transparent';
         colorDot.style.border = colorVal ? 'none' : '1.5px solid var(--border-strong)';
         colorBtn.classList.toggle('placeholder', !colorVal);
+        colorClearBtn.classList.toggle('hidden', !colorVal);
       }
-      function setColorEnabled(enabled) {
-        colorBtn.disabled = !enabled;
-        colorBtn.style.opacity = enabled ? '' : '0.5';
-      }
-      function setCategoryEnabled(enabled) {
-        categoryBtn.disabled = !enabled;
-        categoryBtn.style.opacity = enabled ? '' : '0.5';
-      }
-      // The box itself is the toggle -- tapping it opens the native color
-      // picker (via a hidden <input type="color">, since that's the only way
-      // to summon it), and picking a color both sets it and hands off from
-      // category to custom color, same as picking a category hands off the
-      // other way in selectCategory() above.
+      // The box itself opens the native color picker (via a hidden
+      // <input type="color">, since that's the only way to summon it); the
+      // separate small "x" clears it back to automatic (category/owner)
+      // coloring, since there's no other way to un-set a color once picked
+      // now that it's independent of category.
       colorBtn.addEventListener('click', () => colorSwatch.click());
       colorSwatch.addEventListener('input', () => {
         colorVal = colorSwatch.value;
         refreshColorBtn();
-        categoryVal = null;
-        refreshCategoryBtn();
-        setCategoryEnabled(false);
       });
-      if (colorVal) setCategoryEnabled(false);
-      if (categoryVal) setColorEnabled(false);
+      colorClearBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        colorVal = null;
+        refreshColorBtn();
+      });
 
       let endsDateVal = type === 'recurring' && event && event.recurrence.until ? event.recurrence.until : null;
       function refreshEndsDateBtn() {
@@ -3345,12 +3367,19 @@ const Calendar = {
         });
         root.querySelector('#ev-copy').addEventListener('click', () => {
           openMultiDatePicker([], picked => {
+            // Carries over your own custom color (if you'd set one) to each
+            // copy -- it's a per-viewer preference, not a field on the
+            // original event, so it has to be copied explicitly like this
+            // rather than just spreading the original event's fields.
+            const myColor = Store.eventColorFor(userId, event.id);
             picked.forEach(d => {
+              const newId = uid();
+              if (myColor) Store.setEventColor(userId, newId, myColor);
               Store.addEvent({
-                id: uid(),
+                id: newId,
                 title: event.title, date: d, endDate: null,
                 time: event.time, endTime: event.endTime,
-                ownerId: event.ownerId, participantIds: event.participantIds || [event.ownerId], category: event.category, color: event.color,
+                ownerId: event.ownerId, participantIds: event.participantIds || [event.ownerId], category: event.category,
                 visibility: event.visibility, customPeople: event.customPeople || [],
                 notes: event.notes, location: event.location, attachment: event.attachment, reminders: { ...event.reminders },
                 order: Date.now(),
@@ -3374,7 +3403,6 @@ const Calendar = {
         const ownerId = participantIds[0];
         const category = categoryVal;
         if (category) Store.addCategory(category);
-        const color = colorVal;
 
         const visibility = privateCb.checked ? 'private' : 'shared';
         const customPeople = [];
@@ -3382,9 +3410,13 @@ const Calendar = {
         const notes = root.querySelector('#ev-notes').value.trim() || null;
         const location = root.querySelector('#ev-location').value.trim() || null;
         const endDate = (throughVal && throughVal > date) ? throughVal : null;
+        const eventId = event ? event.id : uid();
+        // Custom color is local to this viewer (see Store.eventColorFor),
+        // not a field on the shared event document.
+        Store.setEventColor(userId, eventId, colorVal);
         let newEvent = {
-          id: event ? event.id : uid(),
-          title, date, endDate, time, endTime, ownerId, participantIds, category, color, visibility, customPeople,
+          id: eventId,
+          title, date, endDate, time, endTime, ownerId, participantIds, category, visibility, customPeople,
           notes, location, attachment: attachmentVal,
           order: event ? event.order : Date.now(),
           exceptions: event ? (event.exceptions || []) : [],

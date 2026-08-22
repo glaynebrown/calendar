@@ -289,7 +289,7 @@ const Settings = {
         <p class="muted" style="margin-top:-4px;">Everyone in a household can see and add events for each other -- this is what you'll mainly use.</p>
         <div id="st-households-list"></div>
         <div class="field-row">
-          <input type="text" id="st-household-name" placeholder="Household name (e.g. The Browns)">
+          <input type="text" id="st-household-name" placeholder="Household name">
           <button class="btn" id="st-create-household">Create</button>
         </div>
       </div>

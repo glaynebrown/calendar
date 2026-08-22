@@ -295,7 +295,13 @@ const Todo = {
         Store.updateNote(note.id, { items: note.items });
         itemsContainer.appendChild(buildItemRow(newItem));
         addInput.value = '';
-        addInput.focus();
+        // iOS Safari's on-screen keyboard treats Return on a plain text
+        // input as "done" and starts dismissing it the instant the keydown
+        // fires -- calling focus() synchronously, in the same handler,
+        // loses that race and the keyboard closes anyway even though this
+        // exact input is still focused in the DOM. Deferring to the next
+        // tick, after iOS's own dismiss handling has already run, wins it.
+        setTimeout(() => addInput.focus(), 0);
       }
       addInput.addEventListener('keydown', e => {
         if (e.key === 'Enter') commitAdd();

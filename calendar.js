@@ -860,24 +860,99 @@ const Calendar = {
       if (!q) return;
       const userId = Store.getCurrentUserId();
       const { peopleIds } = Store.getActiveFilter(userId);
-      const matches = Store.getEvents().filter(e =>
-        e.title.toLowerCase().includes(q) && isEventVisible(e, userId, peopleIds)
-      ).slice(0, 20);
+      const todayStr = formatISO(new Date());
+
+      // Store.getEvents() already holds every real event regardless of date
+      // (the Firestore query has no date filter), so plain events already
+      // match across past/present/future. Birthdays and holidays don't --
+      // they're synthesized per-day on the fly and were never searched at
+      // all, so "Mom" never found Mom's birthday. Fold them in here too,
+      // each resolved to its nearest occurrence (this year if it hasn't
+      // passed yet, else next) via the exact same functions the calendar
+      // grid itself uses, so enrichment/suppression/coloring stay consistent.
+      function nearestAnnualDate(month, day) {
+        let year = new Date().getFullYear();
+        let ds = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        if (ds < todayStr) { year += 1; ds = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`; }
+        return ds;
+      }
+      function nearestHolidayDate(h) {
+        let year = new Date().getFullYear();
+        let ds = formatISO(computeHolidayDate(h.rule, year));
+        if (ds < todayStr) { year += 1; ds = formatISO(computeHolidayDate(h.rule, year)); }
+        return ds;
+      }
+      // A custom/recurring event is one Firestore document representing many
+      // occurrences -- show every one of them (past, present, and future),
+      // not just a single collapsed row, since a series like a run of
+      // review sessions is exactly what someone's searching for the full
+      // list of. Custom dates are already an explicit finite list. A
+      // bounded recurring rule (until/count) is expanded in full; a
+      // never-ending one is capped to a generous 2-year-out window plus a
+      // hard row cap, so an infinite daily reminder can't flood the list.
+      function occurrenceDatesFor(event) {
+        if (event.type === 'custom') {
+          const exceptions = event.exceptions || [];
+          return (event.dates || []).filter(ds => !exceptions.includes(ds)).sort();
+        }
+        if (!event.recurrence) return [event.date];
+        const rule = event.recurrence;
+        const rangeEnd = rule.until || (rule.count ? '9999-12-31' : formatISO(new Date(new Date().getFullYear() + 2, 11, 31)));
+        return expandOccurrences(event, event.date, rangeEnd).sort().slice(0, 60);
+      }
+
+      const eventResults = Store.getEvents()
+        .filter(e => e.title.toLowerCase().includes(q) && isEventVisible(e, userId, peopleIds))
+        .flatMap(e => occurrenceDatesFor(e).map(date => ({ ev: e, date, isStub: false })));
+
+      // Already-enriched occurrences are skipped here on purpose -- the real
+      // linked event already represents them and is picked up by
+      // eventResults above (same title, so it still matches).
+      const birthdayResults = peopleIds
+        .flatMap(ownerId => Store.getBirthdays(ownerId).map(b => ({ ...b, ownerId })))
+        .filter(b => b.name.toLowerCase().includes(q))
+        .map(b => {
+          const ds = nearestAnnualDate(b.month, b.day);
+          const occ = Calendar.getBirthdayOccurrences(ds, [b.ownerId]).find(o => o.birthdayId === b.id);
+          return occ ? { ev: occ, date: ds, isStub: true } : null;
+        })
+        .filter(Boolean);
+
+      const holidayResults = HOLIDAY_DEFS
+        .filter(h => Store.getEnabledHolidays(userId).includes(h.id) && h.name.toLowerCase().includes(q))
+        .map(h => {
+          const ds = nearestHolidayDate(h);
+          const occ = Calendar.getHolidayOccurrences(ds, userId).find(o => o.holidayId === h.id);
+          return occ ? { ev: occ, date: ds, isStub: true } : null;
+        })
+        .filter(Boolean);
+
+      // The panel itself (.dropdown-menu) already scrolls (max-height +
+      // overflow-y:auto), so a long series like a run of review sessions is
+      // meant to be scrolled through, not truncated -- this cap is just a
+      // safety net against a pathological number of rows, not a practical
+      // limit for normal use.
+      const matches = [...eventResults, ...birthdayResults, ...holidayResults]
+        .sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0)
+        .slice(0, 300);
       if (!matches.length) {
         resultsEl.innerHTML = '<p class="muted">No matches.</p>';
         return;
       }
-      matches.forEach(ev => {
+      matches.forEach(({ ev, date, isStub }) => {
         const item = document.createElement('button');
         item.className = 'menu-item';
-        const displayDate = ev.type === 'custom' ? (ev.dates || [])[0] : ev.date;
-        item.innerHTML = `<span>${ev.title}</span><span class="muted">${displayDate}</span>`;
+        const dateLabel = parseISO(date).toLocaleDateString('default', { month: 'short', day: 'numeric', year: 'numeric' });
+        item.innerHTML = `<span>${escapeHTML(ev.title)}</span><span class="muted">${dateLabel}</span>`;
         item.addEventListener('click', () => {
-          const d = parseISO(displayDate);
+          const d = parseISO(date);
           Calendar.currentMonth = new Date(d.getFullYear(), d.getMonth(), 1);
           panel.classList.add('hidden');
           Calendar.render();
-          Calendar.openEventDetailModal(ev, displayDate);
+          // Un-enriched birthday/holiday markers open straight into the
+          // editor on tap, same as tapping them on the calendar grid itself.
+          if (isStub) Calendar.openEventModal(birthdayHolidayStub(ev, date), date);
+          else Calendar.openEventDetailModal(ev, date);
         });
         resultsEl.appendChild(item);
       });
@@ -2984,13 +3059,15 @@ const Calendar = {
         <div class="field" id="ev-color-field">
           <label>Custom Color</label>
           <div style="display:flex; gap:6px;">
-            <button type="button" class="time-field-btn${initialColorVal ? '' : ' placeholder'}" id="ev-color-btn" style="flex:1;">
-              <span class="tf-text">Change color</span>
-              <span class="cat-dot" id="ev-color-dot" style="margin-left:auto; ${initialColorVal ? `background:${initialColorVal};` : 'background:transparent; border:1.5px solid var(--border-strong);'}"></span>
-            </button>
+            <span class="color-field-wrap">
+              <button type="button" class="time-field-btn${initialColorVal ? '' : ' placeholder'}" id="ev-color-btn" style="width:100%;">
+                <span class="tf-text">Change color</span>
+                <span class="cat-dot" id="ev-color-dot" style="margin-left:auto; ${initialColorVal ? `background:${initialColorVal};` : 'background:transparent; border:1.5px solid var(--border-strong);'}"></span>
+              </button>
+              <input type="color" id="ev-color-swatch" class="color-input-overlay" aria-label="Change custom color" value="${initialColorVal || '#71816C'}">
+            </span>
             <button type="button" class="icon-btn${initialColorVal ? '' : ' hidden'}" id="ev-color-clear" aria-label="Remove custom color">${icon('x')}</button>
           </div>
-          <input type="color" id="ev-color-swatch" value="${initialColorVal || '#71816C'}" tabindex="-1" style="position:absolute; width:1px; height:1px; opacity:0; pointer-events:none;">
         </div>
       </div>
       <div class="field">
@@ -3316,12 +3393,14 @@ const Calendar = {
         colorBtn.classList.toggle('placeholder', !colorVal);
         colorClearBtn.classList.toggle('hidden', !colorVal);
       }
-      // The box itself opens the native color picker (via a hidden
-      // <input type="color">, since that's the only way to summon it); the
-      // separate small "x" clears it back to automatic (category/owner)
-      // coloring, since there's no other way to un-set a color once picked
-      // now that it's independent of category.
-      colorBtn.addEventListener('click', () => colorSwatch.click());
+      // The real <input type="color"> sits invisibly on top of the button
+      // itself (.color-field-wrap/.color-input-overlay, same pattern as the
+      // avatar color pickers in settings.js) so the tap lands on the native
+      // control directly -- iOS Safari doesn't reliably honor a synthetic
+      // click() forwarded from a separate button. The separate small "x"
+      // clears it back to automatic (category/owner) coloring, since
+      // there's no other way to un-set a color once picked now that it's
+      // independent of category.
       colorSwatch.addEventListener('input', () => {
         colorVal = colorSwatch.value;
         refreshColorBtn();

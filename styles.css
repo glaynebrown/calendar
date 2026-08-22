@@ -53,6 +53,11 @@ html, body {
      vertical component. */
   overflow: hidden;
   overscroll-behavior: none;
+  /* Rapid taps (e.g. picking several custom dates in a row) shouldn't ever
+     register as a double-tap-to-zoom -- "manipulation" drops that gesture
+     while still allowing normal panning and pinch-zoom. Set on the root so
+     no descendant can re-enable it. */
+  touch-action: manipulation;
 }
 
 /* background-image/size/position/repeat/color are set inline by applyBackground()
@@ -88,6 +93,10 @@ input, select, textarea {
    synthetic click() forwarded from a separate button, so this avoids that
    entirely instead of relying on it. */
 .avatar-color-wrap { position: relative; display: inline-block; flex-shrink: 0; }
+/* Same overlay trick as .avatar-color-wrap above, but sized to grow and
+   fill its row (the event editor's "Change color" button) instead of
+   staying fixed-size like an avatar dot. */
+.color-field-wrap { position: relative; display: block; flex: 1; }
 .color-input-overlay {
   position: absolute; inset: 0;
   width: 100%; height: 100%;

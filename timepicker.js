@@ -39,14 +39,23 @@ function tpSetupColumn(col, realCount, initialIndex, onSettle, loop) {
   let current = middleOffset + initialIndex;
   col.scrollTop = current * TP_ROW_HEIGHT;
 
-  function refreshFade() {
-    Array.from(col.children).forEach((item, i) => {
+  // Only the handful of items within 2 rows of the old and new center ever
+  // have a distinct opacity/weight (anything farther is uniformly at the
+  // faintest step) -- rewriting every child's style on every scroll tick
+  // was the actual cause of the choppy scroll, especially on the 300-item
+  // (60 minutes x 5 looped copies) minutes column. Only touch that bounded
+  // window instead.
+  function refreshFade(prevCurrent) {
+    const lo = Math.max(0, Math.min(current, prevCurrent) - 2);
+    const hi = Math.min(col.children.length - 1, Math.max(current, prevCurrent) + 2);
+    for (let i = lo; i <= hi; i++) {
+      const item = col.children[i];
       const dist = Math.abs(i - current);
       item.style.opacity = dist === 0 ? '1' : dist === 1 ? '0.55' : dist === 2 ? '0.3' : '0.15';
       item.style.fontWeight = dist === 0 ? '500' : '400';
-    });
+    }
   }
-  refreshFade();
+  refreshFade(current);
 
   // Click any visible value to jump straight to it, instead of only scrolling.
   Array.from(col.children).forEach((item, i) => {
@@ -58,13 +67,14 @@ function tpSetupColumn(col, realCount, initialIndex, onSettle, loop) {
   let settleTimer = null;
   col.addEventListener('scroll', () => {
     const idx = Math.max(0, Math.min(totalCount - 1, Math.round(col.scrollTop / TP_ROW_HEIGHT)));
-    if (idx !== current) { current = idx; refreshFade(); }
+    if (idx !== current) { const prev = current; current = idx; refreshFade(prev); }
     clearTimeout(settleTimer);
     settleTimer = setTimeout(() => {
       const settledIdx = Math.max(0, Math.min(totalCount - 1, Math.round(col.scrollTop / TP_ROW_HEIGHT)));
       col.scrollTo({ top: settledIdx * TP_ROW_HEIGHT, behavior: 'smooth' });
+      const prevSettle = current;
       current = settledIdx;
-      refreshFade();
+      refreshFade(prevSettle);
       const realIdx = settledIdx % realCount;
       onSettle(realIdx);
 
@@ -75,8 +85,9 @@ function tpSetupColumn(col, realCount, initialIndex, onSettle, loop) {
           const recentered = middleOffset + realIdx;
           if (recentered !== current) {
             col.scrollTop = recentered * TP_ROW_HEIGHT;
+            const prevRecenter = current;
             current = recentered;
-            refreshFade();
+            refreshFade(prevRecenter);
           }
         }, 350);
       }

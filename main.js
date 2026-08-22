@@ -103,6 +103,7 @@ const App = {
     if (cameFromSignIn) document.getElementById('loading-screen').classList.remove('hidden');
     await Store.startSync(user.uid);
     document.getElementById('loading-screen').classList.add('hidden');
+    Store.migrateLocalNotesIfNeeded(user.uid);
     Store.onDataChange(() => {
       if (this.activeTab === 'calendar-tab') Calendar.render();
       else Todo.render();

@@ -80,39 +80,43 @@ const Todo = {
 
     const list = document.getElementById('notes-list');
     makeSortable(list, orderedIds => {
-      // Shared lists from connections live in their owner's storage, not
-      // ours — only reorder the notes we actually own, in their new relative
-      // positions, and leave everyone else's lists untouched.
+      // Shared lists from connections belong to their owner, not us — only
+      // reorder the notes we actually own, in their new relative positions,
+      // and leave everyone else's lists untouched.
       const userId = Store.getCurrentUserId();
       const byId = {};
-      Store.getNotes(userId).forEach(n => { byId[n.id] = n; });
-      const reordered = orderedIds.map(id => byId[id]).filter(Boolean).map((n, i) => ({ ...n, order: i }));
-      Store.saveNotes(userId, reordered);
+      Store.getNotes().filter(n => n.ownerId === userId).forEach(n => { byId[n.id] = n; });
+      const reordered = orderedIds.map(id => byId[id]).filter(Boolean);
+      reordered.forEach((n, i) => { if (n.order !== i) Store.updateNote(n.id, { order: i }); });
       this.render();
     });
 
     this.render();
   },
 
-  // Your own notes plus any lists connections have shared specifically with you.
+  // Your own notes plus any lists connections have shared specifically with
+  // you -- Store.getNotes() already returns exactly that (own + shared-with-
+  // me, per its Firestore query), this just keeps your own lists grouped
+  // first, each group in its own order.
   getVisibleNotes(userId) {
-    const own = Store.getNotes(userId).map(n => ({ ...n, ownerId: n.ownerId || userId }));
-    const sharedFromOthers = Store.getConnectedIds(userId).flatMap(otherId =>
-      Store.getNotes(otherId)
-        .filter(n => (n.sharedWith || []).includes(userId))
-        .map(n => ({ ...n, ownerId: n.ownerId || otherId }))
-    );
-    return [
-      ...own.sort((a, b) => (a.order || 0) - (b.order || 0)),
-      ...sharedFromOthers.sort((a, b) => (a.order || 0) - (b.order || 0)),
-    ];
+    const notes = Store.getNotes();
+    const own = notes.filter(n => n.ownerId === userId).sort((a, b) => (a.order || 0) - (b.order || 0));
+    const sharedFromOthers = notes.filter(n => n.ownerId !== userId).sort((a, b) => (a.order || 0) - (b.order || 0));
+    return [...own, ...sharedFromOthers];
   },
 
   render() {
     const userId = Store.getCurrentUserId();
     if (!userId) return;
     const showChecked = Store.getShowChecked(userId);
-    document.getElementById('show-checked-btn').classList.toggle('active', showChecked);
+    // Stays the same color either way -- state is communicated by the icon
+    // itself (plain eye vs. slashed-through eye-off), not by darkening the
+    // button when active.
+    const showCheckedBtn = document.getElementById('show-checked-btn');
+    const showCheckedIcon = showCheckedBtn.querySelector('[data-icon]');
+    showCheckedIcon.setAttribute('data-icon', showChecked ? 'eye' : 'eye-off');
+    showCheckedIcon.innerHTML = icon(showChecked ? 'eye' : 'eye-off');
+    showCheckedBtn.setAttribute('aria-label', showChecked ? 'Hide checked items' : 'Show checked items');
 
     const notes = this.getVisibleNotes(userId);
     const list = document.getElementById('notes-list');
@@ -133,7 +137,10 @@ const Todo = {
       } else {
         card.style.background = note.bgColor || NOTE_PALETTE[0].bg;
       }
-      const textColor = isPhoto ? '#ffffff' : (note.textColor || NOTE_PALETTE[0].text);
+      // note.textColor is always set at save time now (auto-contrast or a
+      // manual pick -- see openNoteModal), photo backgrounds included, so
+      // this fallback only ever matters for notes saved before this existed.
+      const textColor = note.textColor || (isPhoto ? '#ffffff' : NOTE_PALETTE[0].text);
 
       const inner = document.createElement('div');
       inner.className = 'note-card-overlay';
@@ -176,8 +183,7 @@ const Todo = {
         textarea.value = note.text || '';
         textarea.style.color = textColor;
         textarea.addEventListener('change', () => {
-          note.text = textarea.value;
-          Store.saveNotes(note.ownerId, Store.getNotes(note.ownerId).map(n => n.id === note.id ? note : n));
+          Store.updateNote(note.id, { text: textarea.value });
         });
         inner.appendChild(textarea);
         card.appendChild(inner);
@@ -199,7 +205,7 @@ const Todo = {
 
         row.querySelector('.note-check').addEventListener('click', () => {
           it.checked = !it.checked;
-          Store.saveNotes(note.ownerId, Store.getNotes(note.ownerId).map(n => n.id === note.id ? note : n));
+          Store.updateNote(note.id, { items: note.items });
           Todo.render();
         });
 
@@ -212,7 +218,7 @@ const Todo = {
           function commit() {
             const val = input.value.trim();
             if (val) it.text = val;
-            Store.saveNotes(note.ownerId, Store.getNotes(note.ownerId).map(n => n.id === note.id ? note : n));
+            Store.updateNote(note.id, { items: note.items });
             Todo.render();
           }
           input.addEventListener('blur', commit);
@@ -237,7 +243,7 @@ const Todo = {
         const movedIds = new Set(orderedIds);
         const untouched = allItems.filter(i => !movedIds.has(i.id));
         note.items = orderedIds.map(id => byId[id]).filter(Boolean).concat(untouched);
-        Store.saveNotes(note.ownerId, Store.getNotes(note.ownerId).map(n => n.id === note.id ? note : n));
+        Store.updateNote(note.id, { items: note.items });
         Todo.render();
       });
 
@@ -267,7 +273,7 @@ const Todo = {
         note.items = note.items || [];
         const newItem = { id: uid(), text, checked: false };
         note.items.push(newItem);
-        Store.saveNotes(note.ownerId, Store.getNotes(note.ownerId).map(n => n.id === note.id ? note : n));
+        Store.updateNote(note.id, { items: note.items });
         itemsContainer.appendChild(buildItemRow(newItem));
         addInput.value = '';
         addInput.focus();
@@ -305,17 +311,28 @@ const Todo = {
     const body = `
       <div class="modal-header"><h2>${modalTitle}</h2><button class="modal-close" id="nt-close">${icon('x')}</button></div>
       <div class="field"><input type="text" id="nt-title" value="${note ? escapeAttr(note.title) : ''}" placeholder="Title"></div>
-      <div class="field">
-        <label>Background</label>
-        <div class="bg-color-grid" id="nt-color-grid">
-          ${presets.map((p, i) => `<button type="button" class="bg-color-swatch" data-i="${i}" style="background:${p.bg}"></button>`).join('')}
-          <span class="color-box color-wheel-trigger" title="Pick any color">
-            <input type="color" id="nt-color-custom" value="${isCustomColor ? note.bgColor : '#f4f3ef'}">
-          </span>
-          <button type="button" class="time-field-btn icon-only${note && note.bgPhoto ? ' active' : ''}" id="nt-photo-btn" aria-label="Choose photo background">${icon('image')}</button>
-          <button type="button" class="icon-btn${note && note.bgPhoto ? '' : ' hidden'}" id="nt-photo-clear" aria-label="Remove photo">${icon('x')}</button>
+      <div class="field-row">
+        <div class="field">
+          <label>Background</label>
+          <div class="bg-color-grid" id="nt-color-grid">
+            ${presets.map((p, i) => `<button type="button" class="bg-color-swatch" data-i="${i}" style="background:${p.bg}"></button>`).join('')}
+            <span class="color-box color-wheel-trigger" title="Pick any color">
+              <input type="color" id="nt-color-custom" value="${isCustomColor ? note.bgColor : '#f4f3ef'}">
+            </span>
+            <button type="button" class="time-field-btn icon-only${note && note.bgPhoto ? ' active' : ''}" id="nt-photo-btn" aria-label="Choose photo background">${icon('image')}</button>
+            <button type="button" class="icon-btn${note && note.bgPhoto ? '' : ' hidden'}" id="nt-photo-clear" aria-label="Remove photo">${icon('x')}</button>
+          </div>
+          <input type="file" id="nt-photo" accept="image/*" class="hidden">
         </div>
-        <input type="file" id="nt-photo" accept="image/*" class="hidden">
+        <div class="field">
+          <label>Text color</label>
+          <div style="display:flex; gap:6px; align-items:center;">
+            <button type="button" class="time-field-btn" id="nt-text-auto" style="width:auto; padding:9px 14px;">Auto</button>
+            <span class="color-box color-wheel-trigger" title="Pick any color">
+              <input type="color" id="nt-text-custom" value="${note && note.textColor ? note.textColor : '#26231f'}">
+            </span>
+          </div>
+        </div>
       </div>
       ${isOwner && otherPeople.length ? `
       <div class="checkbox-row">
@@ -334,6 +351,9 @@ const Todo = {
       let chosenColorIdx = presetIdx < 0 ? 0 : presetIdx;
       let customColor = isCustomColor ? note.bgColor : null;
       let photoDataUrl = note ? note.bgPhoto || null : null;
+      // null = automatic (contrast-computed from the background, same as
+      // before this existed); a hex string = the viewer's own explicit pick.
+      let manualTextColor = note && note.textColorManual ? note.textColor : null;
 
       const grid = root.querySelector('#nt-color-grid');
       const wheelTrigger = grid.querySelector('.color-wheel-trigger');
@@ -341,7 +361,20 @@ const Todo = {
       const photoInput = root.querySelector('#nt-photo');
       const photoBtn = root.querySelector('#nt-photo-btn');
       const photoClearBtn = root.querySelector('#nt-photo-clear');
+      const textAutoBtn = root.querySelector('#nt-text-auto');
+      const textCustomInput = root.querySelector('#nt-text-custom');
 
+      function autoTextColor() {
+        return photoDataUrl ? '#ffffff' : (customColor ? contrastTextColor(customColor) : presets[chosenColorIdx].text);
+      }
+      function refreshTextColorUI() {
+        // Same subdued "active" treatment as the photo button next to it
+        // (accent-colored border/text, not a solid accent fill) -- Auto
+        // isn't literally the app's accent color, so it shouldn't look like
+        // a primary-action button.
+        textAutoBtn.classList.toggle('active', !manualTextColor);
+        textCustomInput.value = manualTextColor || autoTextColor();
+      }
       function refreshGrid() {
         grid.querySelectorAll('.bg-color-swatch').forEach((btn, i) => {
           btn.classList.toggle('selected', i === chosenColorIdx && !photoDataUrl && !customColor);
@@ -349,6 +382,7 @@ const Todo = {
         wheelTrigger.classList.toggle('selected', !!customColor && !photoDataUrl);
         photoBtn.classList.toggle('active', !!photoDataUrl);
         photoClearBtn.classList.toggle('hidden', !photoDataUrl);
+        refreshTextColorUI();
       }
       refreshGrid();
       grid.querySelectorAll('.bg-color-swatch').forEach((btn, i) => {
@@ -372,13 +406,16 @@ const Todo = {
         refreshGrid();
       });
 
+      textAutoBtn.addEventListener('click', () => { manualTextColor = null; refreshTextColorUI(); });
+      textCustomInput.addEventListener('input', e => { manualTextColor = e.target.value; refreshTextColorUI(); });
+
       const shareToggle = root.querySelector('#nt-share-toggle');
       const peoplePicker = root.querySelector('#nt-people-picker');
       if (shareToggle) shareToggle.addEventListener('click', () => peoplePicker.classList.toggle('hidden'));
 
       if (isEdit && isOwner) {
         root.querySelector('#nt-delete').addEventListener('click', () => {
-          Store.saveNotes(userId, Store.getNotes(userId).filter(n => n.id !== note.id));
+          Store.deleteNote(note.id);
           closeModal();
           Todo.render();
         });
@@ -387,23 +424,19 @@ const Todo = {
       root.querySelector('#nt-save').addEventListener('click', () => {
         const title = root.querySelector('#nt-title').value.trim() || 'Untitled';
         const ownerId = isEdit ? note.ownerId : userId;
-        const notes = Store.getNotes(ownerId);
         const bgColor = photoDataUrl ? null : (customColor || presets[chosenColorIdx].bg);
-        const textColor = photoDataUrl ? null : (customColor ? contrastTextColor(customColor) : presets[chosenColorIdx].text);
+        const textColor = manualTextColor || autoTextColor();
+        const textColorManual = !!manualTextColor;
         const sharedWith = isOwner && peoplePicker
           ? Array.from(peoplePicker.querySelectorAll('input:checked')).map(i => i.value)
           : (note ? note.sharedWith || [] : []);
         if (isEdit) {
-          const updated = notes.map(n => n.id === note.id ? {
-            ...n, title, bgColor, textColor, bgPhoto: photoDataUrl, sharedWith,
-          } : n);
-          Store.saveNotes(ownerId, updated);
+          Store.updateNote(note.id, { title, bgColor, textColor, textColorManual, bgPhoto: photoDataUrl, sharedWith });
         } else {
-          notes.push({
-            id: uid(), ownerId, title, bgColor, textColor, bgPhoto: photoDataUrl,
-            type: noteType, items: [], text: '', order: notes.length, sharedWith,
+          Store.addNote({
+            id: uid(), ownerId, title, bgColor, textColor, textColorManual, bgPhoto: photoDataUrl,
+            type: noteType, items: [], text: '', order: Store.getNotes().filter(n => n.ownerId === ownerId).length, sharedWith,
           });
-          Store.saveNotes(ownerId, notes);
         }
         closeModal();
         Todo.render();

@@ -45,6 +45,7 @@ const _cache = {
   categories: [],
   views: [],       // the CURRENT signed-in user's own custom views only (private)
   editTrust: [],   // uids the CURRENT signed-in user has mutual edit-trust with (private)
+  notes: [],       // own notes plus any shared with the current user (see the `visibleTo` note below)
 };
 let _unsubscribers = [];
 let _changeListeners = [];
@@ -86,7 +87,7 @@ const Store = {
   startSync(userId) {
     this.stopSync();
     const db = firebase.firestore();
-    const pending = new Set(['accounts', 'connections-a', 'connections-b', 'households', 'events', 'categories', 'views', 'editTrust']);
+    const pending = new Set(['accounts', 'connections-a', 'connections-b', 'households', 'events', 'categories', 'views', 'editTrust', 'notes']);
     let resolveReady;
     const ready = new Promise(res => { resolveReady = res; });
     const settle = key => {
@@ -143,6 +144,28 @@ const Store = {
       settle('editTrust'); notify();
     }));
 
+    // Same visibleTo pattern as events (see computeVisibleTo/addEvent) but
+    // simpler -- a note's visibleTo is just [ownerId, ...sharedWith], no
+    // household/connections expansion, since "share with specific people"
+    // is meant to be an explicit, one-off list rather than inheriting
+    // whoever the owner happens to be connected to.
+    _unsubscribers.push(db.collection('notes').where('visibleTo', 'array-contains', userId).onSnapshot(
+      snap => {
+        _cache.notes = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        settle('notes'); notify();
+      },
+      // Without an error handler here, a failed query (e.g. the Firestore
+      // rules for this collection not deployed yet) leaves 'notes' stuck in
+      // `pending` forever, which means startSync()'s returned promise never
+      // resolves -- silently hanging the ENTIRE app on the pre-sync skeleton
+      // (no events, nothing) for every user, not just breaking notes. Treat
+      // a failed notes query as "no notes yet" instead of a fatal condition.
+      err => {
+        console.warn('Notes sync failed:', err.code);
+        settle('notes'); notify();
+      }
+    ));
+
     return ready;
   },
   stopSync() {
@@ -150,6 +173,7 @@ const Store = {
     _unsubscribers = [];
     _cache.accounts = []; _cache.connections = []; _cache.households = [];
     _cache.events = []; _cache.categories = []; _cache.views = []; _cache.editTrust = [];
+    _cache.notes = [];
   },
   // Registers a callback fired after every live cache update (i.e. a change
   // made by someone else, or on another device, arrived). main.js uses this
@@ -836,13 +860,64 @@ const Store = {
     writeJSON('fc_plannerMonthThemes', themes);
   },
 
-  // ---- todos (stored per owner; a note can list other connections it's
-  // shared with via sharedWith, so Todo aggregates across connections too) ----
-  getNotes(userId) {
-    return readJSON(`fc_todos_${userId}`, []);
+  // ---- todos/notes: synced via Firestore (like events), not localStorage,
+  // specifically so "Share with specific people" can actually reach another
+  // person's device -- the old per-device version could only ever "share"
+  // within the same browser. getNotes() already returns exactly what's
+  // visible to the signed-in user (own + shared-with-me), same shape as
+  // getEvents(). ----
+  getNotes() {
+    return _cache.notes;
   },
-  saveNotes(userId, notes) {
-    writeJSON(`fc_todos_${userId}`, notes);
+  addNote(note) {
+    const id = note.id || uid();
+    const visibleTo = Array.from(new Set([note.ownerId, ...(note.sharedWith || [])]));
+    const full = { ...note, id, visibleTo };
+    _cache.notes.push(full);
+    firebase.firestore().collection('notes').doc(id).set(full);
+  },
+  updateNote(id, patch) {
+    const idx = _cache.notes.findIndex(n => n.id === id);
+    if (idx < 0) return;
+    const merged = { ..._cache.notes[idx], ...patch };
+    if ('sharedWith' in patch || 'ownerId' in patch) {
+      merged.visibleTo = Array.from(new Set([merged.ownerId, ...(merged.sharedWith || [])]));
+    }
+    _cache.notes[idx] = merged;
+    firebase.firestore().collection('notes').doc(id).set(merged);
+  },
+  deleteNote(id) {
+    _cache.notes = _cache.notes.filter(n => n.id !== id);
+    firebase.firestore().collection('notes').doc(id).delete();
+  },
+  // One-time: carries over whatever was in this device's old local-only
+  // todos storage (from before notes synced via Firestore) into the real
+  // collection, so shipping this change doesn't wipe out lists/notes people
+  // already had. The migrated flag is only set once the writes actually
+  // succeed -- addNote's Firestore write is fire-and-forget, so this awaits
+  // them directly rather than trusting the optimistic local cache push. If
+  // it fails (e.g. the Firestore rules for the new `notes` collection
+  // haven't been deployed yet), the flag stays unset and it safely retries
+  // next load instead of silently orphaning those notes forever. addNote's
+  // .set() (not .add()) also makes a retry harmless either way -- same ids
+  // just get overwritten with the same data, never duplicated.
+  async migrateLocalNotesIfNeeded(userId) {
+    if (localStorage.getItem(`fc_notesMigrated_${userId}`) === '1') return;
+    const local = readJSON(`fc_todos_${userId}`, []);
+    if (!local.length) { localStorage.setItem(`fc_notesMigrated_${userId}`, '1'); return; }
+    try {
+      await Promise.all(local.map(n => {
+        const note = { ...n, ownerId: n.ownerId || userId };
+        const id = note.id || uid();
+        const visibleTo = Array.from(new Set([note.ownerId, ...(note.sharedWith || [])]));
+        const full = { ...note, id, visibleTo };
+        if (!_cache.notes.some(existing => existing.id === id)) _cache.notes.push(full);
+        return firebase.firestore().collection('notes').doc(id).set(full);
+      }));
+      localStorage.setItem(`fc_notesMigrated_${userId}`, '1');
+    } catch (err) {
+      console.warn('Note migration failed, will retry next load:', err.code);
+    }
   },
   getShowChecked(userId) {
     return localStorage.getItem(`fc_showchecked_${userId}`) === '1';

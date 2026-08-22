@@ -2,10 +2,16 @@ rules_version = '2';
 
 // Paste this into Firebase Console -> Firestore Database -> Rules.
 //
-// "Connected" is checked via a deterministic doc id in `connections`
-// (see connectionDocId() in store.js: [a, b] sorted and joined with '_'),
-// so "is A connected to B" is a single O(1) existence lookup rather than a
-// query -- that's what makes the events read/write rules below affordable.
+// Two independent relationships:
+// - `connections`: plain 1:1, visibility only. Never grants edit access.
+// - `editIndex`: mutual edit-trust, granted only by sharing a household
+//   (see store.js's addEditTrust/acceptInvite). Checked via editIndex/{uid}.ids
+//   with a *direct* uid path segment -- Firestore rules can only reliably
+//   get()/exists() a path built from a single direct value, not a
+//   concatenated one or one passed through a wrapper function (confirmed the
+//   hard way: both of those failed even though they're commonly-cited
+//   patterns elsewhere), so every check below inlines the get() directly
+//   rather than wrapping it in a helper.
 
 function isSignedIn() {
   return request.auth != null;
@@ -13,10 +19,6 @@ function isSignedIn() {
 
 function connectionId(a, b) {
   return a < b ? a + '_' + b : b + '_' + a;
-}
-
-function isConnectedTo(otherId) {
-  return isSignedIn() && exists(/databases/$(database)/documents/connections/$(connectionId(request.auth.uid, otherId)));
 }
 
 service cloud.firestore {
@@ -32,6 +34,7 @@ service cloud.firestore {
     // Doc id is the deterministic connectionId(a, b) -- either side can
     // create or delete (matches addConnection/removeConnection being
     // unilateral in store.js), only if they're actually one of the two.
+    // Visibility only -- see editIndex below for edit access.
     match /connections/{id} {
       allow read: if isSignedIn() && (request.auth.uid == resource.data.a || request.auth.uid == resource.data.b);
       allow create: if isSignedIn()
@@ -40,13 +43,44 @@ service cloud.firestore {
       allow delete: if isSignedIn() && (request.auth.uid == resource.data.a || request.auth.uid == resource.data.b);
     }
 
+    // Private per-person index of who has mutual edit-trust with them (see
+    // store.js's addEditTrust/removeEditTrust), keyed directly by uid.
+    // Only the owner can read their own (privacy). Only the owner can
+    // freely rewrite it, but *anyone* can add or remove exactly their own
+    // uid to/from someone else's list, since a mutual grant/revoke is
+    // created by one side's action (joining/leaving a household) affecting
+    // both people.
+    match /editIndex/{uid} {
+      allow read: if isSignedIn() && request.auth.uid == uid;
+      allow create: if isSignedIn() && request.auth.uid == uid && request.resource.data.ids == [];
+      allow update: if isSignedIn() && (
+        request.auth.uid == uid ||
+        (!(request.auth.uid in resource.data.ids) && request.auth.uid in request.resource.data.ids
+          && request.resource.data.ids.size() == resource.data.ids.size() + 1) ||
+        (request.auth.uid in resource.data.ids && !(request.auth.uid in request.resource.data.ids)
+          && request.resource.data.ids.size() == resource.data.ids.size() - 1)
+      );
+    }
+
     // Readable by anyone signed in (an invite preview needs to show a
-    // household's name before the reader is a member); writable only by
-    // existing members (new members are added via acceptInvite).
+    // household's name before the reader is a member). Create: the founder
+    // must be the sole initial member. Update, two shapes:
+    // - "append exactly myself" (self-joining via an invite) -- deliberately
+    //   does *not* require already being a member, since a brand-new joiner
+    //   never is yet.
+    // - "remove exactly one existing member" by any CURRENT member (any
+    //   member can remove any member, including themselves) -- checked via
+    //   size (shrinks by exactly one) plus hasAll (new list is a subset of
+    //   the old one), so it can't be used to sneak in an unrelated change.
     match /households/{id} {
       allow read: if isSignedIn();
-      allow create: if isSignedIn() && request.auth.uid in request.resource.data.memberIds;
-      allow update: if isSignedIn() && request.auth.uid in resource.data.memberIds;
+      allow create: if isSignedIn() && request.resource.data.memberIds == [request.auth.uid];
+      allow update: if isSignedIn() && request.resource.data.name == resource.data.name && (
+        request.resource.data.memberIds == resource.data.memberIds.concat([request.auth.uid]) ||
+        (request.auth.uid in resource.data.memberIds
+          && request.resource.data.memberIds.size() == resource.data.memberIds.size() - 1
+          && resource.data.memberIds.hasAll(request.resource.data.memberIds))
+      );
     }
 
     // Readable by anyone signed in (resolving a code happens before the
@@ -68,17 +102,21 @@ service cloud.firestore {
     // (.where('visibleTo', 'array-contains', uid)), so a compound rule
     // referencing visibility/customPeople directly would reject the query
     // outright rather than filtering it.
-    // Write: the requester must be the event's owner, or connected to them
-    // (matches the "author an event as someone you know" feature) -- this
-    // part IS a single-doc check, so it can use the richer isConnectedTo()
-    // logic without the list-query restriction above applying.
+    // Write: the requester must be the event's owner, or have mutual
+    // edit-trust with them (household co-membership -- matches the "author
+    // an event as someone you know" feature, but only within a household
+    // now, not for a plain connection) -- this part IS a single-doc check,
+    // so it can use editIndex's richer get()-based logic without the
+    // list-query restriction above applying.
     match /events/{id} {
       allow read: if isSignedIn() && request.auth.uid in resource.data.visibleTo;
       allow create: if isSignedIn() && (
-        request.auth.uid == request.resource.data.ownerId || isConnectedTo(request.resource.data.ownerId)
+        request.auth.uid == request.resource.data.ownerId ||
+        request.auth.uid in get(/databases/$(database)/documents/editIndex/$(request.resource.data.ownerId)).data.ids
       );
       allow update, delete: if isSignedIn() && (
-        request.auth.uid == resource.data.ownerId || isConnectedTo(resource.data.ownerId)
+        request.auth.uid == resource.data.ownerId ||
+        request.auth.uid in get(/databases/$(database)/documents/editIndex/$(resource.data.ownerId)).data.ids
       );
     }
 
@@ -90,6 +128,24 @@ service cloud.firestore {
     // Private per-user saved view filters -- never read by anyone else.
     match /views/{uid}/customViews/{viewId} {
       allow read, write: if isSignedIn() && request.auth.uid == uid;
+    }
+
+    // To-do lists / sticky notes. Read: same denormalized-visibleTo pattern
+    // as events (see the comment there) -- visibleTo is just
+    // [ownerId, ...sharedWith], computed client-side in store.js's
+    // addNote/updateNote. Update is open to the owner AND anyone currently
+    // in sharedWith (so a shared grocery list is actually collaborative --
+    // checking off "milk" shouldn't require being the owner), but only the
+    // owner can create or delete the note itself, so a shared viewer can't
+    // unilaterally remove someone else's list or reassign who it belongs to.
+    match /notes/{id} {
+      allow read: if isSignedIn() && request.auth.uid in resource.data.visibleTo;
+      allow create: if isSignedIn() && request.auth.uid == request.resource.data.ownerId;
+      allow update: if isSignedIn() && (
+        request.auth.uid == resource.data.ownerId ||
+        request.auth.uid in resource.data.sharedWith
+      );
+      allow delete: if isSignedIn() && request.auth.uid == resource.data.ownerId;
     }
   }
 }

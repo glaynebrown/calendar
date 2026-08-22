@@ -2494,10 +2494,21 @@ const Calendar = {
         row.className = 'day-view-row sortable-item';
         row.dataset.id = ev.id;
         row.style.borderLeftColor = color || '';
+        const timeLabel = ev.time
+          ? (ev.endTime ? `${formatTime12(ev.time)} – ${formatTime12(ev.endTime)}` : formatTime12(ev.time))
+          : '';
+        const badges = [
+          ev.location ? icon('pin') : '',
+          ev.notes ? icon('notes') : '',
+          ev.attachment ? icon('paperclip') : '',
+        ].filter(Boolean).join('');
         row.innerHTML = `
           ${(ev.isBirthday || ev.isHoliday) ? '' : `<button type="button" class="drag-handle" aria-label="Reorder event">${icon('grip')}</button>`}
           <button type="button" class="day-view-row-open">
-            <span${color ? ` style="color:${color};"` : ''}>${escapeHTML(ev.title)}</span>${ev.time ? `<span class="muted" style="margin-left:auto;">${formatTime12(ev.time)}</span>` : ''}
+            <div class="day-view-row-main">
+              <span${color ? ` style="color:${color};"` : ''}>${escapeHTML(ev.title)}</span>${timeLabel ? `<span class="muted" style="margin-left:auto;">${timeLabel}</span>` : ''}
+            </div>
+            ${badges ? `<div class="day-view-row-badges">${badges}</div>` : ''}
           </button>
         `;
         row.querySelector('.day-view-row-open').addEventListener('click', () => {
@@ -3124,16 +3135,15 @@ const Calendar = {
         if (e.key === 'Enter') { e.preventDefault(); commitNewCategory(); }
       });
 
-      // Clicking anywhere else in the modal closes whichever of these two
+      // Clicking anywhere else in the modal closes whichever of these
       // dropdowns is open -- their own toggle buttons are excluded so a
       // click that opens one doesn't immediately close it again.
       root.addEventListener('click', e => {
-        if (!ownerMenu.classList.contains('hidden') && !ownerMenu.contains(e.target) && !ownerBtn.contains(e.target)) {
-          ownerMenu.classList.add('hidden');
-        }
-        if (!categoryMenu.classList.contains('hidden') && !categoryMenu.contains(e.target) && !categoryBtn.contains(e.target)) {
-          categoryMenu.classList.add('hidden');
-        }
+        [[ownerMenu, ownerBtn], [categoryMenu, categoryBtn], [reminderMenu, reminderBtn], [repeatMenu, repeatBtn]].forEach(([menu, btn]) => {
+          if (!menu.classList.contains('hidden') && !menu.contains(e.target) && !btn.contains(e.target)) {
+            menu.classList.add('hidden');
+          }
+        });
       });
 
       let colorVal = event && event.color ? event.color : null;

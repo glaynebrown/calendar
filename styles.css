@@ -806,10 +806,13 @@ input[type="color"]::-moz-color-swatch { border: none; border-radius: inherit; }
 .day-view-row:hover { background: var(--border); }
 .day-view-row .drag-handle { padding: 8px; flex-shrink: 0; color: var(--accent); }
 .day-view-row-open {
-  flex: 1; min-width: 0; display: flex; align-items: center;
+  flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: stretch; gap: 3px;
   background: none; border: none; padding: 9px 4px; font-size: 14px; font-weight: 500;
   text-align: left; cursor: pointer;
 }
+.day-view-row-main { display: flex; align-items: center; }
+.day-view-row-badges { display: flex; gap: 8px; color: var(--text-muted); }
+.day-view-row-badges svg { width: 13px; height: 13px; }
 
 /* Wider layout for tablet/laptop-size viewports — the app shell was capped
    at a phone width (480px) even on a wide window. The grid/flex layouts

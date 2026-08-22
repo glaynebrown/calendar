@@ -139,10 +139,19 @@ input, select, textarea {
 .icon-btn svg { width: 20px; height: 20px; }
 .month-nav { display: flex; align-items: center; gap: 4px; justify-self: center; }
 .month-label {
-  font-size: 16px; font-weight: 500; min-width: 130px; text-align: center;
+  font-size: 16px; font-weight: 500; text-align: center;
   background: none; border: none; color: var(--text); font-family: inherit; cursor: pointer;
   padding: 4px 8px; border-radius: 8px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  /* min-width (not a hard width) sized to comfortably exceed the widest
+     month name ("September 2026") -- every month name is always shorter
+     than this floor, so month view now renders at this exact same width
+     every time and the prev/next arrows stop bouncing with the text. Week
+     ranges and day-view dates can be wider than this floor (mostly from
+     day-number digit count, or the long weekday+month combo), so they're
+     still free to grow past it as needed -- a hard `width` here would
+     truncate that text instead of letting it grow. */
+  min-width: 150px;
 }
 .month-label:hover { background: var(--surface-2); }
 .panel-title { font-size: 16px; font-weight: 500; text-align: center; justify-self: center; }

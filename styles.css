@@ -192,6 +192,16 @@ input, select, textarea {
 }
 .menu-item:hover { background: var(--surface-2); }
 .menu-item.selected { color: var(--accent); font-weight: 500; }
+
+/* Event title preset suggestions -- anchored to the title field itself
+   (its .field wrapper is position:relative), not the header like
+   .dropdown-menu, since it needs to sit right under the input. */
+.title-suggestions {
+  position: absolute; left: 0; right: 0; top: 100%; margin-top: 4px;
+  background: var(--surface); border: 0.5px solid var(--border);
+  border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+  z-index: 30; padding: 4px; max-height: 200px; overflow-y: auto;
+}
 .menu-item.checklist-item { justify-content: flex-start; gap: 8px; cursor: pointer; }
 .menu-item.checklist-item input[type="checkbox"] { width: 16px; height: 16px; flex-shrink: 0; accent-color: var(--accent); }
 .menu-divider { height: 0.5px; background: var(--border); margin: 6px 2px; }

@@ -18,9 +18,16 @@ function to24Hour(h12, minute, ampm) {
 
 // Repeating the value list several times (for loop columns) gives room to
 // scroll several screens in either direction before ever visibly reaching
-// an edge; tpSetupColumn periodically re-centers back into the middle copy
-// well before that room runs out.
-const TP_LOOP_COPIES = 5;
+// an edge; tpSetupColumn re-centers back into the middle copy, but only
+// once scrolling fully settles (see the scroll listener below) -- several
+// fast flicks in a row, spun without ever pausing long enough to settle,
+// drain that buffer without it ever getting replenished. 5 copies (2 spare
+// on each side of the middle) ran out after roughly two full spins in one
+// direction; a much larger number makes that practically unreachable for
+// any real flicking session while costing nothing at runtime (setup-time
+// DOM creation only -- the fade-repaint work per scroll tick is already
+// bounded to a small window regardless of how many copies exist).
+const TP_LOOP_COPIES = 41;
 
 function tpBuildColumn(id, items, loop) {
   const rendered = loop ? Array(TP_LOOP_COPIES).fill(items).flat() : items;

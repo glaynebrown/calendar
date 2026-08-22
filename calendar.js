@@ -2965,9 +2965,9 @@ const Calendar = {
 
     const body = `
       <div class="modal-header"><h2>${isEdit ? 'Edit event' : 'Add event'}</h2><button class="modal-close" id="ev-close">${icon('x')}</button></div>
-      <div class="field">
-        <input type="text" id="ev-title" list="ev-title-presets" placeholder="Title" value="${event ? escapeAttr(event.title) : ''}">
-        <datalist id="ev-title-presets">${Store.getEventPresets(userId).map(p => `<option value="${escapeAttr(p.title)}">`).join('')}</datalist>
+      <div class="field" style="position:relative;">
+        <input type="text" id="ev-title" placeholder="Title" autocomplete="off" value="${event ? escapeAttr(event.title) : ''}">
+        <div id="ev-title-suggestions" class="title-suggestions hidden"></div>
       </div>
       <div class="checkbox-row"><button type="button" class="link-btn" id="ev-save-preset">Save as preset</button></div>
       <div class="field-row">
@@ -3159,25 +3159,56 @@ const Calendar = {
 
       // Presets: typing a title that matches a saved preset (new events only,
       // so editing an existing event's title never silently overwrites its
-      // real time/category) fills in the rest for you.
+      // real time/category) fills in the rest for you. This used to be a
+      // native <input list> + <datalist>, but iOS Safari surfaces datalist
+      // options in the QuickType bar above the keyboard -- crowding out (or
+      // replacing) autocorrect while typing any title, preset or not. This
+      // hand-built dropdown gives the same "suggestions while typing"
+      // experience without touching the browser's native autofill at all.
       const titleInput = root.querySelector('#ev-title');
+      const titleSuggestions = root.querySelector('#ev-title-suggestions');
+      function applyPresetFields(match) {
+        if (match.time) {
+          startTimeVal = match.time;
+          timeBtn.querySelector('.tf-text').textContent = formatTime12(match.time);
+          timeBtn.classList.remove('placeholder');
+        }
+        if (match.endTime) {
+          endTimeVal = match.endTime;
+          timeEndBtn.querySelector('.tf-text').textContent = formatTime12(match.endTime);
+          timeEndBtn.classList.remove('placeholder');
+        }
+        if (match.category) { categoryVal = match.category; refreshCategoryBtn(); }
+        if (match.color) { colorVal = match.color; refreshColorBtn(); }
+      }
+      function hideTitleSuggestions() {
+        titleSuggestions.classList.add('hidden');
+        titleSuggestions.innerHTML = '';
+      }
       if (!isEdit) {
+        const allPresets = Store.getEventPresets(userId);
+        // A tap inside the suggestion list would otherwise blur the title
+        // input first, closing the list before its click handler ever runs.
+        titleSuggestions.addEventListener('mousedown', e => e.preventDefault());
         titleInput.addEventListener('input', () => {
-          const match = Store.getEventPresets(userId).find(p => p.title.toLowerCase() === titleInput.value.trim().toLowerCase());
-          if (!match) return;
-          if (match.time) {
-            startTimeVal = match.time;
-            timeBtn.querySelector('.tf-text').textContent = formatTime12(match.time);
-            timeBtn.classList.remove('placeholder');
-          }
-          if (match.endTime) {
-            endTimeVal = match.endTime;
-            timeEndBtn.querySelector('.tf-text').textContent = formatTime12(match.endTime);
-            timeEndBtn.classList.remove('placeholder');
-          }
-          if (match.category) { categoryVal = match.category; refreshCategoryBtn(); }
-          if (match.color) { colorVal = match.color; refreshColorBtn(); }
+          const q = titleInput.value.trim().toLowerCase();
+          const exact = allPresets.find(p => p.title.toLowerCase() === q);
+          if (exact) applyPresetFields(exact);
+          if (!q) { hideTitleSuggestions(); return; }
+          const matches = allPresets.filter(p => p.title.toLowerCase().includes(q)).slice(0, 8);
+          if (!matches.length) { hideTitleSuggestions(); return; }
+          titleSuggestions.innerHTML = matches.map(p => `<button type="button" class="menu-item" data-id="${p.id}">${escapeHTML(p.title)}</button>`).join('');
+          titleSuggestions.classList.remove('hidden');
+          titleSuggestions.querySelectorAll('.menu-item').forEach(btn => {
+            btn.addEventListener('click', () => {
+              const preset = allPresets.find(p => p.id === btn.dataset.id);
+              titleInput.value = preset.title;
+              applyPresetFields(preset);
+              hideTitleSuggestions();
+            });
+          });
         });
+        titleInput.addEventListener('blur', hideTitleSuggestions);
       }
 
       const savePresetBtn = root.querySelector('#ev-save-preset');

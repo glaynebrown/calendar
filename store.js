@@ -499,8 +499,24 @@ const Store = {
   },
 
   // ---- categories (simple flat shared list, derived + custom) ----
+  // The list itself is shared (everyone sees the same category names), but
+  // what order you see them in is your own preference, same as colors --
+  // reordering yours doesn't rearrange anyone else's. New categories nobody
+  // has manually placed yet, or ones another person just added, just land
+  // at the end until you drag them somewhere.
+  getCategoryOrder(userId) {
+    return readJSON(`fc_catOrder_${userId}`, []);
+  },
+  setCategoryOrder(userId, orderedNames) {
+    writeJSON(`fc_catOrder_${userId}`, orderedNames);
+  },
   getCategories() {
-    return _cache.categories;
+    const order = this.getCategoryOrder(this.getCurrentUserId());
+    const known = new Set(_cache.categories);
+    const placed = order.filter(c => known.has(c));
+    const placedSet = new Set(placed);
+    const rest = _cache.categories.filter(c => !placedSet.has(c));
+    return [...placed, ...rest];
   },
   addCategory(name) {
     if (_cache.categories.includes(name)) return;

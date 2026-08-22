@@ -714,13 +714,15 @@ const Calendar = {
         listEl.innerHTML = cats.length ? '' : '<p class="muted">No categories yet.</p>';
         cats.forEach(cat => {
           const row = document.createElement('div');
-          row.className = 'color-swatch-row';
+          row.className = 'color-swatch-row sortable-item';
+          row.dataset.id = cat;
           row.innerHTML = `
+            <button type="button" class="drag-handle" aria-label="Reorder ${escapeAttr(cat)}">${icon('grip')}</button>
             <input type="text" value="${escapeAttr(cat)}" style="flex:1; margin-right:8px; padding:7px 8px; border-radius:8px; border:0.5px solid var(--border-strong); background:var(--surface-2); color:var(--text);">
             <button type="button" class="btn btn-danger" style="padding:4px 10px;">Delete</button>
           `;
           const input = row.querySelector('input');
-          const deleteBtn = row.querySelector('button');
+          const deleteBtn = row.querySelector('.btn-danger');
           input.addEventListener('blur', () => {
             const newName = input.value.trim();
             if (newName && newName !== cat) {
@@ -743,6 +745,11 @@ const Calendar = {
         });
       }
       renderList();
+      makeSortable(listEl, orderedNames => {
+        Store.setCategoryOrder(userId, orderedNames);
+        renderList();
+        Calendar.render();
+      });
 
       root.querySelector('#mc-add').addEventListener('click', () => {
         const nameInput = root.querySelector('#mc-new-name');

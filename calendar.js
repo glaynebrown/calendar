@@ -717,7 +717,7 @@ const Calendar = {
       </div>
       <div class="settings-section">
         <h3>Add a custom view</h3>
-        <div class="field"><label>Name</label><input type="text" id="mv-name" placeholder="Me + Nick"></div>
+        <div class="field"><input type="text" id="mv-name" placeholder="Title of View"></div>
         <label class="muted" style="display:block;margin-bottom:4px;">People</label>
         <div class="people-picker" id="mv-people">
           ${people.map(p => `<label><input type="checkbox" value="${p.id}"> ${p.name}</label>`).join('')}
@@ -2745,9 +2745,6 @@ const Calendar = {
       <div class="checkbox-row"><button type="button" class="link-btn" id="ev-save-preset">Save as preset</button></div>
       <div class="field-row">
         <div class="field"><button type="button" class="time-field-btn" id="ev-date-btn">${icon('calendar')}<span class="tf-text">${event && event.endDate && event.endDate !== baseDate ? formatDateRangeShort(baseDate, event.endDate) : formatDateShort(baseDate)}</span></button></div>
-        <div class="field" id="ev-time-field"><button type="button" class="time-field-btn${event && event.time ? '' : ' placeholder'}" id="ev-time-btn">${icon('clock')}<span class="tf-text">${event && event.time ? formatTime12(event.time) : 'Add start time'}</span></button></div>
-      </div>
-      <div class="field-row">
         <div class="field" id="ev-repeat-field">
           <div class="repeat-field-row">
             <button type="button" class="time-field-btn" id="ev-repeat-btn" aria-label="Repeat">${icon('repeat')}<span class="tf-text">Repeat</span></button>
@@ -2782,6 +2779,9 @@ const Calendar = {
             <button type="button" class="menu-item" data-val="custom">Custom dates</button>
           </div>
         </div>
+      </div>
+      <div class="field-row">
+        <div class="field" id="ev-time-field"><button type="button" class="time-field-btn${event && event.time ? '' : ' placeholder'}" id="ev-time-btn">${icon('clock')}<span class="tf-text">${event && event.time ? formatTime12(event.time) : 'Add start time'}</span></button></div>
         <div class="field" id="ev-time-end-field"><button type="button" class="time-field-btn${event && event.endTime ? '' : ' placeholder'}" id="ev-time-end-btn">${icon('clock')}<span class="tf-text">${event && event.endTime ? formatTime12(event.endTime) : 'Add end time'}</span></button></div>
       </div>
       <div class="field" id="ev-reminder-field">
@@ -2812,15 +2812,36 @@ const Calendar = {
           ${editablePeople.map(p => `<label class="menu-item checklist-item"><input type="checkbox" value="${p.id}" ${initialParticipantIds.includes(p.id) ? 'checked' : ''}><span>${p.name}</span></label>`).join('')}
         </div>
       </div>
-      <div class="field">
-        <label>Category</label>
-        <input type="text" id="ev-category" list="ev-cat-list" value="${event && event.category ? escapeAttr(event.category) : ''}" placeholder="Category">
-        <datalist id="ev-cat-list">${categories.map(c => `<option value="${c}">`).join('')}</datalist>
+      <div class="field-row">
+        <div class="field" id="ev-category-field">
+          <label>Category</label>
+          <button type="button" class="time-field-btn${event && event.category ? '' : ' placeholder'}" id="ev-category-btn">
+            ${event && event.category ? `<span class="cat-dot" style="background:${Store.categoryColorFor(userId, event.category)}"></span>` : ''}
+            <span class="tf-text">${event && event.category ? escapeHTML(event.category) : 'No category'}</span>
+          </button>
+          <div id="ev-category-menu" class="repeat-menu hidden">
+            ${categories.map(c => `<button type="button" class="menu-item" data-val="${escapeAttr(c)}"><span class="menu-item-inner"><span class="cat-dot" style="background:${Store.categoryColorFor(userId, c)}"></span>${escapeHTML(c)}</span></button>`).join('')}
+            ${categories.length ? '<div class="menu-divider"></div>' : ''}
+            ${event && event.category ? `<button type="button" class="menu-item" id="ev-category-clear">No category</button>` : ''}
+            <div style="display:flex; gap:6px; padding:6px 10px 4px;">
+              <input type="text" id="ev-category-new" placeholder="New category" style="flex:1; padding:6px 8px; border-radius:8px; border:0.5px solid var(--border-strong); background:var(--surface-2); color:var(--text); font-size:16px;">
+              <button type="button" class="btn" style="padding:4px 10px;" id="ev-category-new-add">Add</button>
+            </div>
+          </div>
+        </div>
+        <div class="field" id="ev-color-field">
+          <label>Custom Color</label>
+          <button type="button" class="time-field-btn${event && event.color ? '' : ' placeholder'}" id="ev-color-btn">
+            <span class="tf-text">Change color</span>
+            <span class="cat-dot" id="ev-color-dot" style="margin-left:auto; ${event && event.color ? `background:${event.color};` : 'background:transparent; border:1.5px solid var(--border-strong);'}"></span>
+          </button>
+          <input type="color" id="ev-color-swatch" value="${event && event.color ? event.color : '#71816C'}" tabindex="-1" style="position:absolute; width:1px; height:1px; opacity:0; pointer-events:none;">
+        </div>
       </div>
       <div class="field">
         <div class="textarea-with-icon">
-          ${icon('notes')}
-          <textarea id="ev-notes" rows="1" placeholder="Add a note">${event && event.notes ? escapeAttr(event.notes) : ''}</textarea>
+          ${icon('pin')}
+          <input type="text" id="ev-location" placeholder="Add location" value="${event && event.location ? escapeAttr(event.location) : ''}">
         </div>
       </div>
       <div class="field">
@@ -2830,6 +2851,12 @@ const Calendar = {
           <button type="button" class="icon-btn hidden" id="ev-attachment-clear" aria-label="Remove attachment">${icon('x')}</button>
         </div>
         <input type="file" id="ev-attachment" accept="image/*,.pdf,.doc,.docx,.txt" class="hidden">
+      </div>
+      <div class="field">
+        <div class="textarea-with-icon">
+          ${icon('notes')}
+          <textarea id="ev-notes" rows="1" placeholder="Add a note">${event && event.notes ? escapeAttr(event.notes) : ''}</textarea>
+        </div>
       </div>
       <div class="checkbox-row">
         <label for="ev-private">
@@ -2894,7 +2921,6 @@ const Calendar = {
       // so editing an existing event's title never silently overwrites its
       // real time/category) fills in the rest for you.
       const titleInput = root.querySelector('#ev-title');
-      const categoryInput = root.querySelector('#ev-category');
       if (!isEdit) {
         titleInput.addEventListener('input', () => {
           const match = Store.getEventPresets(userId).find(p => p.title.toLowerCase() === titleInput.value.trim().toLowerCase());
@@ -2909,7 +2935,7 @@ const Calendar = {
             timeEndBtn.querySelector('.tf-text').textContent = formatTime12(match.endTime);
             timeEndBtn.classList.remove('placeholder');
           }
-          if (match.category) categoryInput.value = match.category;
+          if (match.category) { categoryVal = match.category; refreshCategoryBtn(); }
         });
       }
 
@@ -2917,7 +2943,7 @@ const Calendar = {
       savePresetBtn.addEventListener('click', () => {
         const title = titleInput.value.trim();
         if (!title) { titleInput.focus(); return; }
-        const category = categoryInput.value.trim() || null;
+        const category = categoryVal;
         const presets = Store.getEventPresets(userId);
         const idx = presets.findIndex(p => p.title.toLowerCase() === title.toLowerCase());
         const preset = { id: idx >= 0 ? presets[idx].id : uid(), title, time: startTimeVal, endTime: endTimeVal, category };
@@ -3052,6 +3078,88 @@ const Calendar = {
         refreshOwnerBtn();
       }));
 
+      let categoryVal = event && event.category ? event.category : null;
+      const categoryBtn = root.querySelector('#ev-category-btn');
+      const categoryMenu = root.querySelector('#ev-category-menu');
+      function refreshCategoryBtn() {
+        const dot = categoryVal ? `<span class="cat-dot" style="background:${Store.categoryColorFor(userId, categoryVal)}"></span>` : '';
+        categoryBtn.innerHTML = `${dot}<span class="tf-text">${categoryVal ? escapeHTML(categoryVal) : 'No category'}</span>`;
+        categoryBtn.classList.toggle('placeholder', !categoryVal);
+      }
+      // Category and custom color are mutually exclusive -- colorForEvent()
+      // already treats a custom color as an override that trumps category,
+      // so picking one here clears and disables the other rather than
+      // leaving a category set that silently has no visual effect.
+      function selectCategory(name) {
+        categoryVal = name;
+        categoryMenu.classList.add('hidden');
+        refreshCategoryBtn();
+        if (name) { colorVal = null; refreshColorBtn(); setColorEnabled(false); }
+      }
+      categoryBtn.addEventListener('click', () => categoryMenu.classList.toggle('hidden'));
+      categoryMenu.querySelectorAll('.menu-item[data-val]').forEach(mi => {
+        mi.addEventListener('click', () => selectCategory(mi.dataset.val));
+      });
+      const categoryClearBtn = categoryMenu.querySelector('#ev-category-clear');
+      if (categoryClearBtn) categoryClearBtn.addEventListener('click', () => selectCategory(null));
+      function commitNewCategory() {
+        const input = categoryMenu.querySelector('#ev-category-new');
+        const name = input.value.trim();
+        if (!name) return;
+        Store.addCategory(name);
+        input.value = '';
+        selectCategory(name);
+      }
+      categoryMenu.querySelector('#ev-category-new-add').addEventListener('click', commitNewCategory);
+      categoryMenu.querySelector('#ev-category-new').addEventListener('keydown', e => {
+        if (e.key === 'Enter') { e.preventDefault(); commitNewCategory(); }
+      });
+
+      // Clicking anywhere else in the modal closes whichever of these two
+      // dropdowns is open -- their own toggle buttons are excluded so a
+      // click that opens one doesn't immediately close it again.
+      root.addEventListener('click', e => {
+        if (!ownerMenu.classList.contains('hidden') && !ownerMenu.contains(e.target) && !ownerBtn.contains(e.target)) {
+          ownerMenu.classList.add('hidden');
+        }
+        if (!categoryMenu.classList.contains('hidden') && !categoryMenu.contains(e.target) && !categoryBtn.contains(e.target)) {
+          categoryMenu.classList.add('hidden');
+        }
+      });
+
+      let colorVal = event && event.color ? event.color : null;
+      const colorBtn = root.querySelector('#ev-color-btn');
+      const colorDot = root.querySelector('#ev-color-dot');
+      const colorSwatch = root.querySelector('#ev-color-swatch');
+      function refreshColorBtn() {
+        colorDot.style.background = colorVal || 'transparent';
+        colorDot.style.border = colorVal ? 'none' : '1.5px solid var(--border-strong)';
+        colorBtn.classList.toggle('placeholder', !colorVal);
+      }
+      function setColorEnabled(enabled) {
+        colorBtn.disabled = !enabled;
+        colorBtn.style.opacity = enabled ? '' : '0.5';
+      }
+      function setCategoryEnabled(enabled) {
+        categoryBtn.disabled = !enabled;
+        categoryBtn.style.opacity = enabled ? '' : '0.5';
+      }
+      // The box itself is the toggle -- tapping it opens the native color
+      // picker (via a hidden <input type="color">, since that's the only way
+      // to summon it), and picking a color both sets it and hands off from
+      // category to custom color, same as picking a category hands off the
+      // other way in selectCategory() above.
+      colorBtn.addEventListener('click', () => colorSwatch.click());
+      colorSwatch.addEventListener('input', () => {
+        colorVal = colorSwatch.value;
+        refreshColorBtn();
+        categoryVal = null;
+        refreshCategoryBtn();
+        setCategoryEnabled(false);
+      });
+      if (colorVal) setCategoryEnabled(false);
+      if (categoryVal) setColorEnabled(false);
+
       let endsDateVal = type === 'recurring' && event && event.recurrence.until ? event.recurrence.until : null;
       function refreshEndsDateBtn() {
         endsDateBtn.querySelector('.tf-text').textContent = endsDateVal ? formatDateShort(endsDateVal) : 'Pick end date';
@@ -3137,9 +3245,9 @@ const Calendar = {
                 id: uid(),
                 title: event.title, date: d, endDate: null,
                 time: event.time, endTime: event.endTime,
-                ownerId: event.ownerId, participantIds: event.participantIds || [event.ownerId], category: event.category,
+                ownerId: event.ownerId, participantIds: event.participantIds || [event.ownerId], category: event.category, color: event.color,
                 visibility: event.visibility, customPeople: event.customPeople || [],
-                notes: event.notes, attachment: event.attachment, reminders: { ...event.reminders },
+                notes: event.notes, location: event.location, attachment: event.attachment, reminders: { ...event.reminders },
                 order: Date.now(),
                 exceptions: [], type: 'single', recurrence: null,
               });
@@ -3159,18 +3267,20 @@ const Calendar = {
         const participantIds = Array.from(ownerMenu.querySelectorAll('input:checked')).map(i => i.value);
         if (!participantIds.length) participantIds.push(userId);
         const ownerId = participantIds[0];
-        const category = root.querySelector('#ev-category').value.trim() || null;
+        const category = categoryVal;
         if (category) Store.addCategory(category);
+        const color = colorVal;
 
         const visibility = privateCb.checked ? 'private' : 'shared';
         const customPeople = [];
 
         const notes = root.querySelector('#ev-notes').value.trim() || null;
+        const location = root.querySelector('#ev-location').value.trim() || null;
         const endDate = (throughVal && throughVal > date) ? throughVal : null;
         let newEvent = {
           id: event ? event.id : uid(),
-          title, date, endDate, time, endTime, ownerId, participantIds, category, visibility, customPeople,
-          notes, attachment: attachmentVal,
+          title, date, endDate, time, endTime, ownerId, participantIds, category, color, visibility, customPeople,
+          notes, location, attachment: attachmentVal,
           order: event ? event.order : Date.now(),
           exceptions: event ? (event.exceptions || []) : [],
         };

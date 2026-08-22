@@ -87,7 +87,16 @@ function tpSetupColumn(col, realCount, initialIndex, onSettle, loop) {
     clearTimeout(recenterTimer);
     settleTimer = setTimeout(() => {
       const settledIdx = Math.max(0, Math.min(totalCount - 1, Math.round(col.scrollTop / TP_ROW_HEIGHT)));
-      col.scrollTo({ top: settledIdx * TP_ROW_HEIGHT, behavior: 'smooth' });
+      // Instant, not smooth -- current/refreshFade/onSettle below all treat
+      // settledIdx as already-arrived-at truth the moment this line runs.
+      // A smooth scrollTo here used to make that a lie for the length of
+      // its animation: if a new touch interrupted it mid-flight (exactly
+      // what a quick swipe away from the column does), the real scroll
+      // position froze partway there while the bold/highlighted item had
+      // already jumped to the finish line, leaving the highlight visibly
+      // one row off from where the column actually sat until some later
+      // scroll event happened to correct it.
+      col.scrollTop = settledIdx * TP_ROW_HEIGHT;
       const prevSettle = current;
       current = settledIdx;
       refreshFade(prevSettle);
@@ -95,8 +104,6 @@ function tpSetupColumn(col, realCount, initialIndex, onSettle, loop) {
       onSettle(realIdx);
 
       if (loop) {
-        // Wait for the smooth snap above to finish before silently
-        // recentering -- jumping mid-animation would cut the snap short.
         recenterTimer = setTimeout(() => {
           const recentered = middleOffset + realIdx;
           if (recentered !== current) {

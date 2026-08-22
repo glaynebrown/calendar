@@ -114,6 +114,12 @@ function birthdayHolidayStub(ev, dateStr) {
     attachment: null,
     reminders: {},
     order: Date.now(),
+    // Traces this event back to the birthday it came from, so the editor
+    // and details view can find and show that birthday's gift-ideas note
+    // (a field on the birthday record itself, never on this shared event --
+    // see Store.setBirthdayGiftIdeas) even after this occurrence is shared
+    // with other participants. Holidays don't get one; birthdays only.
+    birthdayId: ev.isBirthday ? ev.birthdayId : null,
   };
 }
 
@@ -141,7 +147,7 @@ const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'Ju
 const MONTH_OPTIONS = MONTH_NAMES.map((m, i) => `<option value="${i + 1}">${m}</option>`).join('');
 const DAY_OPTIONS = Array.from({ length: 31 }, (_, i) => `<option value="${i + 1}">${i + 1}</option>`).join('');
 
-const HOLIDAY_COLOR = '#BA7517';
+const HOLIDAY_COLOR = '#B8895F';
 // Fixed dates repeat every year on the same month/day. nth-weekday and
 // last-weekday cover the floating US holidays (weekday: 0=Sun..6=Sat).
 const HOLIDAY_DEFS = [
@@ -2645,14 +2651,14 @@ const Calendar = {
       function renderForm(existing) {
         addBtn.classList.add('hidden');
         formWrap.innerHTML = `
-          <div class="field-row" style="align-items:center;">
-            <div class="field"><input type="text" id="bd-name" placeholder="Name" value="${existing ? escapeAttr(existing.name) : ''}"></div>
+          <div class="field-row" style="align-items:center; margin-bottom:14px;">
             <input type="color" id="bd-color" value="${(existing && existing.color) || Store.getDefaultBirthdayColor(userId) || HOLIDAY_COLOR}">
+            <div class="field" style="margin-bottom:0;"><input type="text" id="bd-name" placeholder="Name" value="${existing ? escapeAttr(existing.name) : ''}"></div>
           </div>
           <div class="field-row">
             <div class="field"><select id="bd-month">${MONTH_OPTIONS}</select></div>
             <div class="field"><select id="bd-day">${DAY_OPTIONS}</select></div>
-            <div class="field"><input type="number" id="bd-year" placeholder="Year (optional)"></div>
+            <div class="field"><input type="number" id="bd-year" class="bd-year-input" placeholder="Year (optional)"></div>
           </div>
           <div class="btn-row">
             ${existing ? `<button class="btn btn-danger" id="bd-delete">Delete</button>` : ''}
@@ -2802,6 +2808,20 @@ const Calendar = {
         <div class="detail-row-content">${escapeHTML(event.notes).replace(/\n/g, '<br>')}</div>
       </div>
     `);
+    // Gift ideas live on the birthday record itself (Store.setBirthdayGiftIdeas),
+    // never on this event -- private to the viewer even when the event is shared.
+    if (event.birthdayId) {
+      const birthday = (Store.getBirthdays(userId) || []).find(b => b.id === event.birthdayId);
+      if (birthday && birthday.giftIdeas) rows.push(`
+        <div class="detail-row">
+          <span class="detail-row-icon">${icon('gift')}</span>
+          <div class="detail-row-content">
+            <div class="muted" style="margin-bottom:2px;">Gift ideas</div>
+            <div>${escapeHTML(birthday.giftIdeas).replace(/\n/g, '<br>')}</div>
+          </div>
+        </div>
+      `);
+    }
     if (event.attachment) {
       const isImage = event.attachment.type && event.attachment.type.startsWith('image/');
       rows.push(`
@@ -2858,6 +2878,12 @@ const Calendar = {
     // addEvent (not updateEvent, which would silently no-op against an id
     // that doesn't exist in the store yet).
     const isEdit = !!(event && Store.getEvents().some(e => e.id === event.id));
+    // Gift ideas live on the birthday record (Store.setBirthdayGiftIdeas), not
+    // on this event -- stays private to this viewer even once the birthday's
+    // shared with other participants, since it's never written to the event.
+    const giftIdeasBirthday = event && event.birthdayId
+      ? (Store.getBirthdays(userId) || []).find(b => b.id === event.birthdayId)
+      : null;
 
     const type = event ? event.type : 'single';
     const baseDate = event ? (event.type === 'custom' ? (event.dates || [dateStr])[0] : event.date) : dateStr;
@@ -2987,6 +3013,14 @@ const Calendar = {
           <textarea id="ev-notes" rows="1" placeholder="Add a note">${event && event.notes ? escapeAttr(event.notes) : ''}</textarea>
         </div>
       </div>
+      ${event && event.birthdayId ? `
+      <div class="field">
+        <div class="textarea-with-icon">
+          ${icon('gift')}
+          <textarea id="ev-gift-ideas" rows="1" placeholder="Wish list / gift ideas (private to you)">${giftIdeasBirthday && giftIdeasBirthday.giftIdeas ? escapeAttr(giftIdeasBirthday.giftIdeas) : ''}</textarea>
+        </div>
+      </div>
+      ` : ''}
       <div class="checkbox-row">
         <label for="ev-private">
           <input type="checkbox" id="ev-private" ${event && event.visibility === 'private' ? 'checked' : ''}>
@@ -3139,6 +3173,17 @@ const Calendar = {
       }
       reminderCustomRow.querySelector('#ev-reminder-custom-set').addEventListener('click', commitCustomReminder);
       reminderCustomAmount.addEventListener('keydown', e => { if (e.key === 'Enter') commitCustomReminder(); });
+
+      // Gift ideas save straight to the birthday record on blur, independent
+      // of the main Save button -- same "commit immediately" pattern as
+      // reminders above, and never bundled into newEvent below since this
+      // text must never reach the shared Firestore event document.
+      const giftIdeasInput = root.querySelector('#ev-gift-ideas');
+      if (giftIdeasInput) {
+        giftIdeasInput.addEventListener('blur', () => {
+          Store.setBirthdayGiftIdeas(userId, event.birthdayId, giftIdeasInput.value.trim());
+        });
+      }
 
       let attachmentVal = event && event.attachment ? event.attachment : null;
       const attachmentInput = root.querySelector('#ev-attachment');
@@ -3420,6 +3465,12 @@ const Calendar = {
           notes, location, attachment: attachmentVal,
           order: event ? event.order : Date.now(),
           exceptions: event ? (event.exceptions || []) : [],
+          // Pointer back to the originating birthday record (see
+          // birthdayHolidayStub) so the gift-ideas note -- which lives only in
+          // that local birthday record, never here -- can still be found on
+          // later edits. addEvent overwrites the whole document, so this must
+          // be carried forward explicitly or it's silently dropped on first save.
+          birthdayId: event ? (event.birthdayId || null) : null,
         };
         // Reminders already saved live via setMyReminder as they're changed
         // (see above) -- only set the initial map here for a brand-new event,

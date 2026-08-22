@@ -46,6 +46,13 @@ html, body {
   background: var(--bg);
   color: var(--text);
   font-family: var(--font-app);
+  /* The whole layout is sized to fit one screen (#app fills 100dvh, and
+     every view manages its own internal overflow-y:auto). Locking the page
+     itself stops iOS Safari's rubber-band scroll/bounce from hijacking a
+     left/right swipe (to change month/week/day) the moment it has any
+     vertical component. */
+  overflow: hidden;
+  overscroll-behavior: none;
 }
 
 /* background-image/size/position/repeat/color are set inline by applyBackground()
@@ -629,6 +636,17 @@ html.text-white .month-label:hover {
   border-radius: 8px; border: 2px solid transparent; padding: 0; cursor: pointer;
 }
 .bg-color-swatch.selected { border-color: var(--text); }
+
+/* Small, subtle color dot next to the birthday name field -- deliberately
+   not the same visual weight as .color-box's other, more prominent uses
+   (default-color settings, category/holiday edit), just a quiet indicator
+   sitting on the name field's own midline. */
+#bd-color { width: 18px; height: 18px; border-radius: 50%; border: none; padding: 0; cursor: pointer; flex-shrink: 0; }
+
+/* "Year (optional)" is too long for its 1/3-width slot next to month/day on
+   narrow screens -- shrink just the placeholder so the full text fits
+   instead of running off the edge of the box. */
+.bd-year-input::placeholder { font-size: 12px; }
 
 /* Native color inputs render their swatch with their own inset/border by
    default, so the picked color never quite fills our rounded box. Strip

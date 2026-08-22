@@ -6,7 +6,10 @@
    same as always: these are per-device preferences or intentionally local
    data, not shared calendar content. */
 
-const DEFAULT_COLORS = ['#7C93A8', '#1D9E75', '#D85A30', '#D4537E', '#378ADD', '#639922', '#BA7517', '#993C1D'];
+// Auto-assigned colors (new accounts, new categories) before anyone picks
+// their own -- kept soft/muted to match the app's palette, not saturated or
+// bright, since these are what people see before they've customized anything.
+const DEFAULT_COLORS = ['#7C93A8', '#8A9A6B', '#B08F5A', '#A67B87', '#7E8CA3', '#9C8AA5', '#71816C', '#8C6A56'];
 
 function readJSON(key, fallback) {
   try {
@@ -837,13 +840,23 @@ const Store = {
     localStorage.setItem(`fc_showchecked_${userId}`, val ? '1' : '0');
   },
 
-  // ---- birthdays (stored per person who entered them; visible to whoever
-  // can see that owner, same as events -- no separate privacy toggle) ----
+  // ---- birthdays (local to this device, private to you -- see
+  // calendar.js's birthdayHolidayStub for how tapping one on the calendar
+  // can still share a single year's occurrence as a real event) ----
   getBirthdays(userId) {
     return readJSON(`fc_birthdays_${userId}`, []);
   },
   saveBirthdays(userId, list) {
     writeJSON(`fc_birthdays_${userId}`, list);
+  },
+  // Gift ideas/wish list notes stick to the birthday itself, not any one
+  // year's event -- carries forward every year, and stays private even if
+  // that year's occurrence gets shared with other participants, since it's
+  // never written anywhere but this local birthday record.
+  setBirthdayGiftIdeas(userId, birthdayId, text) {
+    this.saveBirthdays(userId, this.getBirthdays(userId).map(b =>
+      b.id === birthdayId ? { ...b, giftIdeas: text || null } : b
+    ));
   },
 
   // ---- event presets (title -> {time, endTime, category}, saved right from

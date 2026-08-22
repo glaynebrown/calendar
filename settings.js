@@ -1,4 +1,6 @@
-const FONT_OPTIONS = ['Inter', 'Nunito', 'Quicksand', 'Poppins', 'Comfortaa', 'Lato', 'Work Sans', 'Baloo 2'];
+// Georgia is a system font (installed everywhere already) -- no Google
+// Fonts entry needed for it, unlike every other option here.
+const FONT_OPTIONS = ['Inter', 'Nunito', 'Quicksand', 'Poppins', 'Comfortaa', 'Lato', 'Work Sans', 'Baloo 2', 'Georgia', 'Lora'];
 const BG_COLOR_OPTIONS = ['#f4f3ef', '#f6efe9'];
 const BORDER_COLOR_OPTIONS = ['#ffffff', '#000000', '#f4f3ef', '#2c2b25'];
 

@@ -108,6 +108,16 @@ const Todo = {
   render() {
     const userId = Store.getCurrentUserId();
     if (!userId) return;
+    // Notes sync live now (see Store.startSync's notes listener) -- even a
+    // change you just made yourself echoes back through that listener and
+    // triggers a render a moment later, same as if someone else had edited
+    // something. That used to be harmless when saves were purely local, but
+    // now it can yank focus/the keyboard away mid-typing (e.g. right after
+    // hitting Enter to add another to-do item). Capture whatever's focused
+    // before rebuilding the list, then restore the equivalent element after,
+    // so the flow of typing item after item survives a re-render triggered
+    // out from under the user.
+    const focusInfo = this._captureFocus();
     const showChecked = Store.getShowChecked(userId);
     // Stays the same color either way -- state is communicated by the icon
     // itself (plain eye vs. slashed-through eye-off), not by darkening the
@@ -291,10 +301,21 @@ const Todo = {
         if (e.key === 'Enter') commitAdd();
       });
       addInput.addEventListener('blur', () => {
-        if (!addInput.value.trim() && Todo.expandedAddFor === note.id) {
-          Todo.expandedAddFor = null;
-          Todo.render();
-        }
+        // Deferred, not immediate: a blur here doesn't necessarily mean the
+        // user tapped away -- a live-sync re-render (see render()'s comment)
+        // removes and rebuilds this exact input too, which fires blur on
+        // the outgoing one an instant before the new one gets refocused.
+        // Give that refocus a moment to happen, then only collapse if
+        // nothing in this note's add row actually ended up focused.
+        setTimeout(() => {
+          const stillFocused = document.activeElement && document.activeElement.closest
+            && document.activeElement.closest(`.note-card[data-id="${note.id}"] .note-add-item`);
+          if (stillFocused) return;
+          if (!addInput.value.trim() && Todo.expandedAddFor === note.id) {
+            Todo.expandedAddFor = null;
+            Todo.render();
+          }
+        }, 50);
       });
       addBtn.addEventListener('click', () => {
         if (isAddExpanded) commitAdd();
@@ -305,6 +326,31 @@ const Todo = {
       card.appendChild(inner);
       list.appendChild(card);
     });
+
+    this._restoreFocus(focusInfo);
+  },
+
+  // Only the "add item" input, deliberately -- item-text editing commits on
+  // blur (see buildItemRow), so trying to restore focus there too would
+  // mean the outgoing input's blur-triggered commit firing its own nested
+  // render() call while this one is still rebuilding the list. Narrower
+  // but safe: covers exactly the flow this was written for (typing several
+  // new items in a row without the list re-rendering out from under you).
+  _captureFocus() {
+    const active = document.activeElement;
+    if (!active || active.tagName !== 'INPUT') return null;
+    if (!active.closest('.note-add-item')) return null;
+    const card = active.closest('.note-card');
+    if (!card) return null;
+    return { noteId: card.dataset.id, selStart: active.selectionStart, selEnd: active.selectionEnd };
+  },
+  _restoreFocus(info) {
+    if (!info || this.expandedAddFor !== info.noteId) return;
+    const card = document.querySelector(`.note-card[data-id="${info.noteId}"]`);
+    const input = card && card.querySelector('.note-add-item input');
+    if (!input) return;
+    input.focus();
+    if (info.selStart != null) input.setSelectionRange(info.selStart, info.selEnd);
   },
 
   openNoteModal(note, newType) {

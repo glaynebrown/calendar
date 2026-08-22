@@ -142,6 +142,8 @@ const App = {
     // and this re-queries the same static form elements each time rather
     // than recreating them -- so guard against attaching a second listener,
     // which would otherwise double-fire the whole sign-in flow on click.
+    const forgotBtn = document.getElementById('signin-forgot-password');
+    const forgotStatus = document.getElementById('signin-forgot-status');
     if (continueBtn.dataset.wired) return;
     continueBtn.dataset.wired = '1';
 
@@ -151,7 +153,29 @@ const App = {
       'auth/wrong-password': 'Incorrect password for that email.',
       'auth/invalid-credential': 'Incorrect password for that email.',
       'auth/too-many-requests': 'Too many attempts -- wait a bit and try again.',
+      'auth/user-not-found': 'No account found with that email.',
     };
+
+    // Uses whatever's currently typed in the email field -- someone landing
+    // here after "Incorrect password" already has it filled in, so this
+    // doesn't need its own separate email prompt.
+    forgotBtn.addEventListener('click', async () => {
+      const email = emailInput.value.trim();
+      errorEl.textContent = '';
+      forgotStatus.textContent = '';
+      if (!email || !email.includes('@')) {
+        errorEl.textContent = 'Enter your email above first, then tap "Forgot password?"';
+        return;
+      }
+      forgotBtn.disabled = true;
+      try {
+        await firebase.auth().sendPasswordResetEmail(email);
+        forgotStatus.textContent = `Password reset email sent to ${email} -- check your inbox.`;
+      } catch (err) {
+        errorEl.textContent = AUTH_ERROR_MESSAGES[err.code] || err.message;
+      }
+      forgotBtn.disabled = false;
+    });
 
     continueBtn.addEventListener('click', async () => {
       const name = nameInput.value.trim();

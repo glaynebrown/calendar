@@ -297,8 +297,20 @@ const Store = {
     const db = firebase.firestore();
     if (a === this.getCurrentUserId() && !_cache.editTrust.includes(b)) _cache.editTrust.push(b);
     if (b === this.getCurrentUserId() && !_cache.editTrust.includes(a)) _cache.editTrust.push(a);
-    db.collection('editIndex').doc(a).update({ ids: firebase.firestore.FieldValue.arrayUnion(b) });
-    db.collection('editIndex').doc(b).update({ ids: firebase.firestore.FieldValue.arrayUnion(a) });
+    // .set(..., {merge:true}) instead of .update() -- accounts created
+    // before editIndex existed never got their doc from createAccountDoc's
+    // one-time init, so .update() permanently fails with "No document to
+    // update" for them on every single sign-in (reconcileHouseholdTies
+    // retries this every time, since the missing doc means the local
+    // isEditTrusted() check can never see it as already done). A merge-set
+    // creates the doc on first write instead of requiring it to pre-exist,
+    // which self-heals this permanently after just one successful call.
+    db.collection('editIndex').doc(a).set({ ids: firebase.firestore.FieldValue.arrayUnion(b) }, { merge: true }).catch(err => {
+      console.warn('addEditTrust failed for', a, err.code);
+    });
+    db.collection('editIndex').doc(b).set({ ids: firebase.firestore.FieldValue.arrayUnion(a) }, { merge: true }).catch(err => {
+      console.warn('addEditTrust failed for', b, err.code);
+    });
   },
   removeEditTrust(a, b) {
     const db = firebase.firestore();

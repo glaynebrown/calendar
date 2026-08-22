@@ -76,6 +76,47 @@ function compareEventOrder(a, b) {
   return (a.time || '').localeCompare(b.time || '') || (a.order || 0) - (b.order || 0);
 }
 
+function formatEventTimeRange(ev) {
+  if (!ev.time) return '';
+  return ev.endTime ? `${formatTime12(ev.time)} – ${formatTime12(ev.endTime)}` : formatTime12(ev.time);
+}
+
+// Turns a synthesized birthday/holiday occurrence into a pre-filled but
+// not-yet-saved event, for the first time it's tapped. Its id is the same
+// deterministic id getBirthdayOccurrences/getHolidayOccurrences already use
+// for that occurrence (e.g. "bday-<id>-2026") -- saving this creates a real
+// event under that same id, and that's also how the synthetic marker knows
+// to stop generating itself for this occurrence once a real one exists (see
+// the "already linked" filter in both of those functions). Because it's a
+// single, non-recurring event tied to one specific date, editing or
+// deleting it only ever affects this one occurrence -- the underlying
+// recurring birthday/holiday definition is never touched.
+function birthdayHolidayStub(ev, dateStr) {
+  const userId = Store.getCurrentUserId();
+  return {
+    id: ev.id,
+    title: ev.title,
+    date: dateStr,
+    endDate: null,
+    time: null,
+    endTime: null,
+    type: 'single',
+    recurrence: null,
+    exceptions: [],
+    ownerId: userId,
+    participantIds: [userId],
+    category: null,
+    color: ev.color || null,
+    visibility: 'shared',
+    customPeople: [],
+    notes: null,
+    location: null,
+    attachment: null,
+    reminders: {},
+    order: Date.now(),
+  };
+}
+
 function isEventVisible(event, currentUserId, viewPeopleIds) {
   const participantIds = event.participantIds || [event.ownerId];
   if (!participantIds.some(id => viewPeopleIds.includes(id))) return false;
@@ -267,11 +308,12 @@ const Calendar = {
   },
 
   setViewMode(mode) {
-    if (mode !== 'month' && this.viewMode === 'month') {
-      this.currentDate = new Date(this.currentMonth.getFullYear(), this.currentMonth.getMonth(), 1);
-    } else if (mode === 'month' && this.viewMode !== 'month') {
-      this.currentMonth = new Date(this.currentDate.getFullYear(), this.currentDate.getMonth(), 1);
-    }
+    // Always jumps back to today rather than carrying over wherever you'd
+    // navigated to -- switching views is a fresh look at "now," not a
+    // continuation of whatever month/week you'd paged to before switching.
+    const today = new Date();
+    this.currentDate = today;
+    this.currentMonth = new Date(today.getFullYear(), today.getMonth(), 1);
     this.viewMode = mode;
     this.render();
   },
@@ -315,9 +357,15 @@ const Calendar = {
   // for free. Not affected by category filters, since they aren't categorized.
   getBirthdayOccurrences(dateStr, peopleIds) {
     const [y, m, d] = dateStr.split('-').map(Number);
+    const eventIds = new Set(Store.getEvents().map(e => e.id));
     return peopleIds
       .flatMap(ownerId => Store.getBirthdays(ownerId).map(b => ({ ...b, ownerId })))
       .filter(b => b.month === m && b.day === d)
+      // Once this occurrence has been tapped and enriched, a real event
+      // with this exact id exists -- that event represents it from now on
+      // (with real notes/location/participants/etc.), so stop generating
+      // the plain synthetic marker alongside it.
+      .filter(b => !eventIds.has(`bday-${b.id}-${y}`))
       .map(b => ({
         id: `bday-${b.id}-${y}`,
         birthdayId: b.id,
@@ -339,9 +387,13 @@ const Calendar = {
     if (!enabled.length) return [];
     const year = parseInt(dateStr.split('-')[0], 10);
     const color = Store.getHolidayColor(userId) || HOLIDAY_COLOR;
+    const eventIds = new Set(Store.getEvents().map(e => e.id));
     return HOLIDAY_DEFS
       .filter(h => enabled.includes(h.id))
       .filter(h => formatISO(computeHolidayDate(h.rule, year)) === dateStr)
+      // See the matching filter in getBirthdayOccurrences -- once enriched,
+      // the real linked event takes over representing this occurrence.
+      .filter(h => !eventIds.has(`holiday-${h.id}-${year}`))
       .map(h => ({
         id: `holiday-${h.id}-${year}`,
         holidayId: h.id,
@@ -938,12 +990,11 @@ const Calendar = {
         row.type = 'button';
         row.className = 'week-event-row';
         row.style.borderLeftColor = color || '';
-        row.innerHTML = `${ev.time ? `<span class="week-event-time">${formatTime12(ev.time)}</span>` : ''}<span class="week-event-title"${color ? ` style="color:${color};"` : ''}>${escapeHTML(ev.title)}</span>`;
+        row.innerHTML = `<span class="week-event-title"${color ? ` style="color:${color};"` : ''}>${escapeHTML(ev.title)}</span>${ev.time ? `<span class="week-event-time">${formatEventTimeRange(ev)}</span>` : ''}`;
         row.addEventListener('click', e => {
           e.stopPropagation();
-          if (ev.isBirthday) this.openBirthdayModal(ev.ownerId, ev.birthdayId);
-          else if (ev.isHoliday) this.openHolidayInfoModal(ev.title);
-          else this.openEventModal(ev, ds);
+          if (ev.isBirthday || ev.isHoliday) this.openEventModal(birthdayHolidayStub(ev, ds), ds);
+          else this.openEventDetailModal(ev, ds);
         });
         list.appendChild(row);
       });
@@ -1014,15 +1065,14 @@ const Calendar = {
       row.className = 'week-event-row day-event-row';
       row.style.borderLeftColor = color || '';
       row.innerHTML = `
-        ${ev.time ? `<span class="week-event-time">${formatTime12(ev.time)}</span>` : ''}
         <span class="week-event-title"${color ? ` style="color:${color};"` : ''}>${escapeHTML(ev.title)}</span>
+        ${ev.time ? `<span class="week-event-time">${formatEventTimeRange(ev)}</span>` : ''}
         ${participantNames ? `<span class="muted day-event-owner">${escapeHTML(participantNames)}</span>` : ''}
       `;
       row.addEventListener('click', e => {
         e.stopPropagation();
-        if (ev.isBirthday) this.openBirthdayModal(ev.ownerId, ev.birthdayId);
-        else if (ev.isHoliday) this.openHolidayInfoModal(ev.title);
-        else this.openEventModal(ev, ds);
+        if (ev.isBirthday || ev.isHoliday) this.openEventModal(birthdayHolidayStub(ev, ds), ds);
+        else this.openEventDetailModal(ev, ds);
       });
       list.appendChild(row);
     });
@@ -1655,11 +1705,10 @@ const Calendar = {
       row.type = 'button';
       row.className = 'week-event-row';
       row.style.borderLeftColor = color || '';
-      row.innerHTML = `${ev.time ? `<span class="week-event-time">${formatTime12(ev.time)}</span>` : ''}<span class="week-event-title"${color ? ` style="color:${color};"` : ''}>${escapeHTML(ev.title)}</span>`;
+      row.innerHTML = `<span class="week-event-title"${color ? ` style="color:${color};"` : ''}>${escapeHTML(ev.title)}</span>${ev.time ? `<span class="week-event-time">${formatEventTimeRange(ev)}</span>` : ''}`;
       row.addEventListener('click', () => {
-        if (ev.isBirthday) this.openBirthdayModal(ev.ownerId, ev.birthdayId);
-        else if (ev.isHoliday) this.openHolidayInfoModal(ev.title);
-        else this.openEventModal(ev, dateStr);
+        if (ev.isBirthday || ev.isHoliday) this.openEventModal(birthdayHolidayStub(ev, dateStr), dateStr);
+        else this.openEventDetailModal(ev, dateStr);
       });
       body.appendChild(row);
     });
@@ -2396,9 +2445,8 @@ const Calendar = {
         }
         chip.addEventListener('click', e => {
           e.stopPropagation();
-          if (ev.isBirthday) this.openBirthdayModal(ev.ownerId, ev.birthdayId);
-          else if (ev.isHoliday) this.openHolidayInfoModal(ev.title);
-          else this.openEventModal(ev, ds);
+          if (ev.isBirthday || ev.isHoliday) this.openEventModal(birthdayHolidayStub(ev, ds), ds);
+          else this.openEventDetailModal(ev, ds);
         });
         cell.appendChild(chip);
       });
@@ -2452,8 +2500,13 @@ const Calendar = {
           bar.style.background = color + '22';
           bar.style.color = color;
         }
-        bar.style.left = (rectStart.left - gridRect.left) + 'px';
-        bar.style.width = (rectEnd.right - rectStart.left) + 'px';
+        // Inset by the day-cell's own horizontal padding (2px each side) --
+        // otherwise the bar sits flush with the cell's outer edge while
+        // everything else in it (day number, chips) is inset by that
+        // padding, so the bar visibly pokes out past them on both ends.
+        const H_PAD = 2;
+        bar.style.left = (rectStart.left - gridRect.left + H_PAD) + 'px';
+        bar.style.width = (rectEnd.right - rectStart.left - H_PAD * 2) + 'px';
         bar.style.top = (dayNumBottom - gridRect.top + 2 + stackIdx * BAR_SLOT) + 'px';
         bar.style.borderTopLeftRadius = segStart === ev.date ? '4px' : '0';
         bar.style.borderBottomLeftRadius = segStart === ev.date ? '4px' : '0';
@@ -2461,7 +2514,7 @@ const Calendar = {
         bar.style.borderBottomRightRadius = segEnd === ev.endDate ? '4px' : '0';
         bar.addEventListener('click', e => {
           e.stopPropagation();
-          this.openEventModal(ev, ev.date);
+          this.openEventDetailModal(ev, ev.date);
         });
         gridEl.appendChild(bar);
       });
@@ -2494,28 +2547,26 @@ const Calendar = {
         row.className = 'day-view-row sortable-item';
         row.dataset.id = ev.id;
         row.style.borderLeftColor = color || '';
-        const timeLabel = ev.time
-          ? (ev.endTime ? `${formatTime12(ev.time)} – ${formatTime12(ev.endTime)}` : formatTime12(ev.time))
-          : '';
+        const timeLabel = formatEventTimeRange(ev);
+        // Same order as the fields appear in the event editor: location,
+        // attachment, notes.
         const badges = [
           ev.location ? icon('pin') : '',
-          ev.notes ? icon('notes') : '',
           ev.attachment ? icon('paperclip') : '',
+          ev.notes ? icon('notes') : '',
         ].filter(Boolean).join('');
         row.innerHTML = `
           ${(ev.isBirthday || ev.isHoliday) ? '' : `<button type="button" class="drag-handle" aria-label="Reorder event">${icon('grip')}</button>`}
           <button type="button" class="day-view-row-open">
             <div class="day-view-row-main">
-              <span${color ? ` style="color:${color};"` : ''}>${escapeHTML(ev.title)}</span>${timeLabel ? `<span class="muted" style="margin-left:auto;">${timeLabel}</span>` : ''}
+              <span${color ? ` style="color:${color};"` : ''}>${escapeHTML(ev.title)}</span>${badges ? `<span class="day-view-row-badges">${badges}</span>` : ''}${timeLabel ? `<span class="muted" style="margin-left:auto;">${timeLabel}</span>` : ''}
             </div>
-            ${badges ? `<div class="day-view-row-badges">${badges}</div>` : ''}
           </button>
         `;
         row.querySelector('.day-view-row-open').addEventListener('click', () => {
           closeModal();
-          if (ev.isBirthday) this.openBirthdayModal(ev.ownerId, ev.birthdayId);
-          else if (ev.isHoliday) this.openHolidayInfoModal(ev.title);
-          else this.openEventModal(ev, dateStr);
+          if (ev.isBirthday || ev.isHoliday) this.openEventModal(birthdayHolidayStub(ev, dateStr), dateStr);
+          else this.openEventDetailModal(ev, dateStr);
         });
         listEl.appendChild(row);
       });
@@ -2632,64 +2683,6 @@ const Calendar = {
     });
   },
 
-  // Calendar tap-through: view a birthday. Editable only if you're the one
-  // who added it -- a connection's entry (they added it, not you) is read-only.
-  openBirthdayModal(ownerId, birthdayId) {
-    const userId = Store.getCurrentUserId();
-    const isOwner = ownerId === userId;
-    const b = Store.getBirthdays(ownerId).find(x => x.id === birthdayId);
-    if (!b) return;
-
-    const body = `
-      <div class="modal-header"><h2>Birthday</h2><button class="modal-close" id="bdm-close">${icon('x')}</button></div>
-      <div class="field"><input type="text" id="bdm-name" placeholder="Name" value="${escapeAttr(b.name)}" ${isOwner ? '' : 'disabled'}></div>
-      <div class="field-row">
-        <select id="bdm-month" ${isOwner ? '' : 'disabled'}>${MONTH_OPTIONS}</select>
-        <select id="bdm-day" ${isOwner ? '' : 'disabled'}>${DAY_OPTIONS}</select>
-        <input type="number" id="bdm-year" placeholder="Year (optional)" ${isOwner ? '' : 'disabled'} ${b.year ? `value="${b.year}"` : ''}>
-      </div>
-      <div class="field-row" style="align-items:center;">
-        <input type="color" id="bdm-color" class="color-box" value="${b.color || HOLIDAY_COLOR}" ${isOwner ? '' : 'disabled'}>
-        ${isOwner ? `<button type="button" class="link-btn" id="bdm-color-clear">Use their usual color</button>` : ''}
-      </div>
-      <div class="btn-row">
-        ${isOwner ? `<button class="btn btn-danger" id="bdm-delete">Delete</button>` : ''}
-        ${isOwner ? `<button class="btn btn-primary" id="bdm-save">Save</button>` : ''}
-      </div>
-    `;
-    openModal(body, root => {
-      root.querySelector('#bdm-close').addEventListener('click', closeModal);
-      root.querySelector('#bdm-month').value = b.month;
-      root.querySelector('#bdm-day').value = b.day;
-      if (!isOwner) return;
-
-      let chosenColor = b.color || null;
-      const colorInput = root.querySelector('#bdm-color');
-      colorInput.addEventListener('input', e => { chosenColor = e.target.value; });
-      root.querySelector('#bdm-color-clear').addEventListener('click', () => {
-        chosenColor = null;
-        colorInput.value = HOLIDAY_COLOR;
-      });
-
-      root.querySelector('#bdm-delete').addEventListener('click', () => {
-        Store.saveBirthdays(ownerId, Store.getBirthdays(ownerId).filter(x => x.id !== b.id));
-        closeModal();
-        Calendar.render();
-      });
-      root.querySelector('#bdm-save').addEventListener('click', () => {
-        const name = root.querySelector('#bdm-name').value.trim();
-        if (!name) return;
-        const month = parseInt(root.querySelector('#bdm-month').value, 10);
-        const day = parseInt(root.querySelector('#bdm-day').value, 10);
-        const yearRaw = root.querySelector('#bdm-year').value.trim();
-        const year = yearRaw ? parseInt(yearRaw, 10) : null;
-        Store.saveBirthdays(ownerId, Store.getBirthdays(ownerId).map(x => x.id === b.id ? { ...x, name, month, day, year, color: chosenColor } : x));
-        closeModal();
-        Calendar.render();
-      });
-    });
-  },
-
   // Settings entry point: just a checklist of the built-in holiday defs --
   // a personal display preference, not owned/shared data like birthdays are.
   openHolidaysManager() {
@@ -2726,14 +2719,86 @@ const Calendar = {
     });
   },
 
-  // Holidays aren't owned or editable per-instance -- tapping one on the
-  // calendar just confirms what it is; manage the list itself in Settings.
-  openHolidayInfoModal(title) {
-    openModal(`
-      <div class="modal-header"><h2>Holiday</h2><button class="modal-close" id="holm-close">${icon('x')}</button></div>
-      <p>${escapeHTML(title)}</p>
-      <p class="muted">Manage which holidays show up in Settings.</p>
-    `, root => root.querySelector('#holm-close').addEventListener('click', closeModal));
+  // Read-only summary shown when an event is tapped -- editing now happens
+  // one step later, via the pencil button here, instead of jumping straight
+  // into the edit form. dateStr is the specific occurrence tapped (matters
+  // for recurring/custom events), forwarded to openEventModal unchanged so
+  // editing lands on the same occurrence-aware behavior as before this view
+  // existed.
+  openEventDetailModal(event, dateStr) {
+    const userId = Store.getCurrentUserId();
+    const color = this.colorForEvent(event, userId);
+    const isMultiDay = event.type === 'single' && event.endDate && event.endDate !== event.date;
+    const dateLabel = isMultiDay ? formatDateRangeShort(event.date, event.endDate) : formatDateShort(dateStr || event.date);
+    const timeLabel = formatEventTimeRange(event);
+    const participantNames = (event.participantIds || [event.ownerId]).map(id => (Store.getPerson(id) || {}).name).filter(Boolean).join(', ');
+
+    const rows = [];
+    rows.push(`
+      <div class="detail-row">
+        <span class="detail-row-icon">${icon('clock')}</span>
+        <div class="detail-row-content">
+          <div>${escapeHTML(dateLabel)}</div>
+          ${timeLabel ? `<div class="muted">${escapeHTML(timeLabel)}</div>` : ''}
+        </div>
+      </div>
+    `);
+    if (participantNames) rows.push(`
+      <div class="detail-row">
+        <span class="detail-row-icon">${icon('users')}</span>
+        <div class="detail-row-content">${escapeHTML(participantNames)}</div>
+      </div>
+    `);
+    if (event.category) rows.push(`
+      <div class="detail-row">
+        <span class="cat-dot" style="background:${Store.categoryColorFor(userId, event.category)}; margin-top:5px;"></span>
+        <div class="detail-row-content">${escapeHTML(event.category)}</div>
+      </div>
+    `);
+    if (event.location) rows.push(`
+      <div class="detail-row">
+        <span class="detail-row-icon">${icon('pin')}</span>
+        <div class="detail-row-content">${escapeHTML(event.location)}</div>
+      </div>
+    `);
+    if (event.notes) rows.push(`
+      <div class="detail-row">
+        <span class="detail-row-icon">${icon('notes')}</span>
+        <div class="detail-row-content">${escapeHTML(event.notes).replace(/\n/g, '<br>')}</div>
+      </div>
+    `);
+    if (event.attachment) {
+      const isImage = event.attachment.type && event.attachment.type.startsWith('image/');
+      rows.push(`
+        <div class="detail-row">
+          <span class="detail-row-icon">${icon('paperclip')}</span>
+          <div class="detail-row-content">
+            ${isImage ? `<img src="${event.attachment.dataUrl}" style="max-width:100%;border-radius:8px;display:block;margin-bottom:6px;">` : ''}
+            <div>${escapeHTML(event.attachment.name)}</div>
+          </div>
+        </div>
+      `);
+    }
+
+    const body = `
+      <div class="modal-header">
+        <h2>Event details</h2>
+        <div style="display:flex; gap:4px;">
+          <button type="button" class="icon-btn" id="edv-edit" aria-label="Edit event">${icon('pencil')}</button>
+          <button type="button" class="modal-close" id="edv-close">${icon('x')}</button>
+        </div>
+      </div>
+      <h3 class="event-detail-title"${color ? ` style="color:${color};"` : ''}>${escapeHTML(event.title)}</h3>
+      <div class="event-detail-rows">${rows.join('')}</div>
+    `;
+
+    openModal(body, root => {
+      root.querySelector('#edv-close').addEventListener('click', closeModal);
+      root.querySelector('#edv-edit').addEventListener('click', () => {
+        closeModal();
+        this.openEventModal(event, dateStr);
+      });
+    });
   },
 
   openEventModal(event, dateStr) {
@@ -2751,7 +2816,12 @@ const Calendar = {
     }
     const initialParticipantIds = event ? (event.participantIds || [event.ownerId]) : [userId];
     const categories = Store.getCategories();
-    const isEdit = !!event;
+    // Distinct from "event is truthy" -- a birthday/holiday stub carries a
+    // pre-filled event object for its first tap, but nothing's actually
+    // been saved under its id yet, so this still needs to go through
+    // addEvent (not updateEvent, which would silently no-op against an id
+    // that doesn't exist in the store yet).
+    const isEdit = !!(event && Store.getEvents().some(e => e.id === event.id));
 
     const type = event ? event.type : 'single';
     const baseDate = event ? (event.type === 'custom' ? (event.dates || [dateStr])[0] : event.date) : dateStr;
@@ -2881,7 +2951,7 @@ const Calendar = {
       <div class="checkbox-row">
         <label for="ev-private">
           <input type="checkbox" id="ev-private" ${event && event.visibility === 'private' ? 'checked' : ''}>
-          Private (only visible to me)
+          Private (only visible to participants)
         </label>
       </div>
       <div class="btn-row">

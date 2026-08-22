@@ -2998,7 +2998,7 @@ const Calendar = {
           </div>
           <div id="ev-interval-extra" class="hidden" style="margin-top:8px; display:flex; gap:6px; align-items:center;">
             <span class="muted" style="font-size:13px;">Every</span>
-            <input type="number" id="ev-interval-n" min="1" placeholder="9" style="width:60px;">
+            <input type="number" id="ev-interval-n" min="1" placeholder="#" style="width:60px;">
             <select id="ev-interval-unit">
               <option value="daily">days</option>
               <option value="weekly">weeks</option>

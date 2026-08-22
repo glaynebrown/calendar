@@ -214,10 +214,19 @@ const Todo = {
           const input = document.createElement('input');
           input.type = 'text';
           input.value = it.text;
-          input.style.cssText = `color:${textColor};background:rgba(255,255,255,0.5);border:none;border-radius:4px;padding:2px 4px;font-size:13px;flex:1;min-width:0;`;
+          // 16px, not the row's 13px -- iOS Safari auto-zooms the whole page
+          // when a focused input is smaller than 16px. The "Add item" input
+          // right below already does the same thing for the same reason.
+          input.style.cssText = `color:${textColor};background:rgba(255,255,255,0.5);border:none;border-radius:4px;padding:2px 4px;font-size:16px;flex:1;min-width:0;`;
           function commit() {
             const val = input.value.trim();
-            if (val) it.text = val;
+            if (val) {
+              it.text = val;
+            } else {
+              // Erasing an item's text entirely deletes it -- checking it
+              // off is no longer the only way to remove one.
+              note.items = (note.items || []).filter(i => i.id !== it.id);
+            }
             Store.updateNote(note.id, { items: note.items });
             Todo.render();
           }

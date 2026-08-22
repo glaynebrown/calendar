@@ -72,8 +72,38 @@ function expandOccurrences(event, rangeStartStr, rangeEndStr) {
   return results;
 }
 
-function compareEventOrder(a, b) {
-  return (a.time || '').localeCompare(b.time || '') || (a.order || 0) - (b.order || 0);
+// A manual drag-reorder (see openDayView's makeSortable) always wins outright,
+// even when it puts a later-timed event above an earlier one -- that's the
+// whole point of dragging it. Order is compared first, time only breaks a
+// tie. For an event that's never been manually reordered, defaultEventOrder
+// below gives it a rank derived from its own time, so the *default* display
+// (before anyone drags anything) still comes out chronological -- ties
+// there (same time, or several untimed events) still fall through to the
+// time comparison, same as always.
+//
+// dateStr, when passed, is which OCCURRENCE this comparison is for -- a
+// recurring/custom event can show up on many different days, and dragging
+// it into place on one of those days shouldn't drag its position along on
+// every other day too. Store.setEventOrderForDate saves those drags into
+// orderByDate (keyed by occurrence date) rather than the flat `order`
+// field, so a per-date entry there -- when one exists -- always wins over
+// the flat field, which now only ever supplies the single-occurrence
+// default rank a never-reordered event gets from defaultEventOrder.
+function eventOrderForDate(ev, dateStr) {
+  const perDate = dateStr && ev.orderByDate && ev.orderByDate[dateStr];
+  return perDate != null ? perDate : (ev.order || 0);
+}
+function compareEventOrder(dateStr) {
+  return (a, b) => eventOrderForDate(a, dateStr) - eventOrderForDate(b, dateStr) || (a.time || '').localeCompare(b.time || '');
+}
+
+// Minutes-since-midnight, so events naturally rank in time order until
+// someone drags one -- untimed events get -1, sorting before any real time
+// (matching localeCompare's old '' < '00:00' behavior).
+function defaultEventOrder(time) {
+  if (!time) return -1;
+  const [h, m] = time.split(':').map(Number);
+  return h * 60 + m;
 }
 
 function formatEventTimeRange(ev) {
@@ -113,7 +143,7 @@ function birthdayHolidayStub(ev, dateStr) {
     location: null,
     attachment: null,
     reminders: {},
-    order: Date.now(),
+    order: defaultEventOrder(null),
     // Traces this event back to the birthday it came from, so the editor
     // and details view can find and show that birthday's gift-ideas note
     // (a field on the birthday record itself, never on this shared event --
@@ -349,7 +379,7 @@ const Calendar = {
         return event.date <= dateStr && event.endDate >= dateStr;
       }
       return expandOccurrences(event, dateStr, dateStr).length > 0;
-    }).sort(compareEventOrder);
+    }).sort(compareEventOrder(dateStr));
     return [
       ...this.getHolidayOccurrences(dateStr, userId),
       ...this.getBirthdayOccurrences(dateStr, peopleIds),
@@ -2610,7 +2640,7 @@ const Calendar = {
         cell.appendChild(spacer);
       }
 
-      const dayEvents = (dateMap[ds] || []).slice().sort(compareEventOrder);
+      const dayEvents = (dateMap[ds] || []).slice().sort(compareEventOrder(ds));
       dayEvents.slice(0, 3).forEach(ev => {
         const chip = document.createElement('div');
         chip.className = 'event-chip';
@@ -2742,8 +2772,14 @@ const Calendar = {
         listEl.appendChild(row);
       });
       if (dayEvents.length > 1) {
+        // Saved per-occurrence (see Store.setEventOrderForDate) so
+        // reordering a recurring/custom event here only ever affects this
+        // one day -- its position on every other day it occurs is
+        // untouched. Harmlessly no-ops for birthday/holiday rows mixed
+        // into this list (they have no real event doc to save an order
+        // onto), same as it always has.
         makeSortable(listEl, orderedIds => {
-          orderedIds.forEach((id, i) => Store.updateEvent(id, { order: i }));
+          orderedIds.forEach((id, i) => Store.setEventOrderForDate(id, dateStr, i));
           Calendar.render();
         });
       }
@@ -3244,6 +3280,20 @@ const Calendar = {
         }
         if (match.category) { categoryVal = match.category; refreshCategoryBtn(); }
         if (match.color) { colorVal = match.color; refreshColorBtn(); }
+        if (match.notes) root.querySelector('#ev-notes').value = match.notes;
+        if (match.location) root.querySelector('#ev-location').value = match.location;
+        // Only touches the checkboxes if the preset actually recorded
+        // someone -- an empty/missing list here just means an older preset
+        // saved before this existed, not "clear everyone off the event".
+        if (match.participantIds && match.participantIds.length) {
+          ownerMenu.querySelectorAll('input').forEach(cb => {
+            cb.checked = match.participantIds.includes(cb.value);
+          });
+          if (!ownerMenu.querySelectorAll('input:checked').length) ownerMenu.querySelector('input').checked = true;
+          refreshOwnerBtn();
+        }
+        if (match.visibility) privateCb.checked = match.visibility === 'private';
+        if (match.reminder != null) { reminderVal = match.reminder; refreshReminderUI(); }
       }
       function hideTitleSuggestions() {
         titleSuggestions.classList.add('hidden');
@@ -3299,7 +3349,21 @@ const Calendar = {
         const category = categoryVal;
         const presets = Store.getEventPresets(userId);
         const idx = presets.findIndex(p => p.title.toLowerCase() === title.toLowerCase());
-        const preset = { id: idx >= 0 ? presets[idx].id : uid(), title, time: startTimeVal, endTime: endTimeVal, category, color: colorVal };
+        // Deliberately leaves out attachment, the multi-day span, and
+        // repeat/reminder-series specifics -- those are tied to one
+        // particular occurrence (a specific photo, a specific trip's
+        // dates), not something every future event with this title should
+        // inherit. Everything else that's a genuine "this is what a
+        // <title> event always looks like" trait is captured.
+        const preset = {
+          id: idx >= 0 ? presets[idx].id : uid(),
+          title, time: startTimeVal, endTime: endTimeVal, category, color: colorVal,
+          notes: root.querySelector('#ev-notes').value.trim() || null,
+          location: root.querySelector('#ev-location').value.trim() || null,
+          participantIds: Array.from(ownerMenu.querySelectorAll('input:checked')).map(i => i.value),
+          visibility: privateCb.checked ? 'private' : 'shared',
+          reminder: reminderVal,
+        };
         if (idx >= 0) presets[idx] = preset; else presets.push(preset);
         Store.saveEventPresets(userId, presets);
         savePresetBtn.textContent = 'Saved!';
@@ -3549,10 +3613,15 @@ const Calendar = {
       }
       refreshCustomDatesBtn();
       customDatesBtn.addEventListener('click', () => {
+        // Anchors to the event's own currently-set date (not today) so the
+        // picker opens already showing that month -- matches Copy's picker
+        // below. Without this it always opened on the real-world current
+        // month regardless of which month the event itself is in, forcing
+        // a manual scroll every time they didn't happen to match.
         openMultiDatePicker(customDatesVal, picked => {
           customDatesVal = picked;
           refreshCustomDatesBtn();
-        });
+        }, dateVal);
       });
 
       function refreshRepeatUI() {
@@ -3618,7 +3687,7 @@ const Calendar = {
                 ownerId: event.ownerId, participantIds: event.participantIds || [event.ownerId], category: event.category,
                 visibility: event.visibility, customPeople: event.customPeople || [],
                 notes: event.notes, location: event.location, attachment: event.attachment, reminders: { ...event.reminders },
-                order: Date.now(),
+                order: defaultEventOrder(event.time),
                 exceptions: [], type: 'single', recurrence: null,
               });
             });
@@ -3654,7 +3723,7 @@ const Calendar = {
           id: eventId,
           title, date, endDate, time, endTime, ownerId, participantIds, category, visibility, customPeople,
           notes, location, attachment: attachmentVal,
-          order: event ? event.order : Date.now(),
+          order: event ? event.order : defaultEventOrder(time),
           exceptions: event ? (event.exceptions || []) : [],
           // Pointer back to the originating birthday record (see
           // birthdayHolidayStub) so the gift-ideas note -- which lives only in

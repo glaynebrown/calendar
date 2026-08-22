@@ -538,6 +538,25 @@ const Store = {
     firebase.firestore().collection('events').doc(eventId)
       .update({ [field]: minutes == null ? firebase.firestore.FieldValue.delete() : minutes });
   },
+  // Per-occurrence display order within one specific day, independent of
+  // every other day this event might occur on -- a recurring event's
+  // Monday position shouldn't drag its Tuesday position along with it (see
+  // openDayView's makeSortable and calendar.js's eventOrderForDate). Same
+  // targeted dot-notation reasoning as setMyReminder above, but WITH a
+  // real existence guard (unlike setMyReminder) -- day-view rows also
+  // include synthesized birthday/holiday entries with no real event
+  // document yet, and update() against a missing doc throws, so those
+  // must be skipped rather than attempted.
+  setEventOrderForDate(eventId, dateStr, order) {
+    const idx = _cache.events.findIndex(e => e.id === eventId);
+    if (idx < 0) return;
+    const orderByDate = { ..._cache.events[idx].orderByDate, [dateStr]: order };
+    _cache.events[idx] = { ..._cache.events[idx], orderByDate };
+    firebase.firestore().collection('events').doc(eventId)
+      .update({ [`orderByDate.${dateStr}`]: order }).catch(err => {
+        console.warn('setEventOrderForDate failed for', eventId, err.code);
+      });
+  },
 
   // ---- categories (simple flat shared list, derived + custom) ----
   // The list itself is shared (everyone sees the same category names), but

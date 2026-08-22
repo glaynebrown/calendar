@@ -603,6 +603,17 @@ const Store = {
   setShowEventColors(userId, val) {
     localStorage.setItem(`fc_showEventColors_${userId}`, val ? '1' : '0');
   },
+  // Month view only (day chips + multi-day bars): whether the event's own
+  // color tints both box and text ('colored', the default), or the box
+  // goes solid with fixed white/black text instead. Per-viewer like every
+  // other color preference -- your choice here doesn't affect what anyone
+  // else on the household sees.
+  getEventTextMode(userId) {
+    return localStorage.getItem(`fc_eventTextMode_${userId}`) || 'colored';
+  },
+  setEventTextMode(userId, mode) {
+    localStorage.setItem(`fc_eventTextMode_${userId}`, mode);
+  },
   // categories: [] means "all categories, including uncategorized" (same convention as views).
   getChecklistFilter(userId) {
     return readJSON(`fc_checklist_${userId}`, { peopleIds: this.getKnownPeople(userId).map(p => p.id), categories: [] });

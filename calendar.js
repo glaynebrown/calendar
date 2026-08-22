@@ -433,6 +433,24 @@ const Calendar = {
       : Store.colorFor(userId, ev.ownerId);
   },
 
+  // Month view only (day chips + multi-day bars): applies `color` as either
+  // a light tint with colored text (the default, "colored" mode -- same
+  // hex at low alpha behind, full-strength in front), or a solid fill with
+  // fixed white/black text if the viewer's chosen one of those instead via
+  // Store.getEventTextMode. Centralized here since both render sites need
+  // the exact same three-way branch.
+  applyMonthColorStyle(el, color, userId) {
+    if (!color) return;
+    const mode = Store.getEventTextMode(userId);
+    if (mode === 'white' || mode === 'black') {
+      el.style.background = color;
+      el.style.color = mode === 'white' ? '#ffffff' : '#000000';
+    } else {
+      el.style.background = color + '22';
+      el.style.color = color;
+    }
+  },
+
   shiftPeriod(delta) {
     if (this.viewMode === 'month') {
       this.currentMonth = new Date(this.currentMonth.getFullYear(), this.currentMonth.getMonth() + delta, 1);
@@ -2543,11 +2561,7 @@ const Calendar = {
         const chip = document.createElement('div');
         chip.className = 'event-chip';
         chip.textContent = ev.title;
-        const color = this.colorForEvent(ev, userId);
-        if (color) {
-          chip.style.background = color + '22';
-          chip.style.color = color;
-        }
+        this.applyMonthColorStyle(chip, this.colorForEvent(ev, userId), userId);
         chip.addEventListener('click', e => {
           e.stopPropagation();
           if (ev.isBirthday || ev.isHoliday) this.openEventModal(birthdayHolidayStub(ev, ds), ds);
@@ -2600,11 +2614,7 @@ const Calendar = {
         const bar = document.createElement('div');
         bar.className = 'multiday-bar';
         bar.textContent = ev.title;
-        const color = this.colorForEvent(ev, userId);
-        if (color) {
-          bar.style.background = color + '22';
-          bar.style.color = color;
-        }
+        this.applyMonthColorStyle(bar, this.colorForEvent(ev, userId), userId);
         // Inset by the day-cell's own horizontal padding (2px each side) --
         // otherwise the bar sits flush with the cell's outer edge while
         // everything else in it (day number, chips) is inset by that

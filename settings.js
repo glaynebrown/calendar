@@ -331,6 +331,14 @@ const Settings = {
             <span class="switch-track"></span>
           </span>
         </label>
+        <div class="field" style="margin-top:10px;">
+          <label>Event text color (month view)</label>
+          <select id="st-event-text-mode" ${Store.getShowEventColors(userId) ? '' : 'disabled'}>
+            <option value="colored" ${Store.getEventTextMode(userId) === 'colored' ? 'selected' : ''}>Colored</option>
+            <option value="white" ${Store.getEventTextMode(userId) === 'white' ? 'selected' : ''}>Always white</option>
+            <option value="black" ${Store.getEventTextMode(userId) === 'black' ? 'selected' : ''}>Always black</option>
+          </select>
+        </div>
         <div class="field" style="margin-top:14px;">
           <label>Default calendar view</label>
           <select id="st-default-calendar-view">
@@ -458,8 +466,14 @@ const Settings = {
         Calendar.render();
       });
 
+      const eventTextModeSelect = root.querySelector('#st-event-text-mode');
       root.querySelector('#st-event-colors-toggle').addEventListener('change', e => {
         Store.setShowEventColors(userId, e.target.checked);
+        eventTextModeSelect.disabled = !e.target.checked;
+        Calendar.render();
+      });
+      eventTextModeSelect.addEventListener('change', e => {
+        Store.setEventTextMode(userId, e.target.value);
         Calendar.render();
       });
 

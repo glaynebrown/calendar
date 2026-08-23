@@ -415,7 +415,7 @@ const Calendar = {
         category: null,
         time: null,
         date: dateStr,
-        title: b.year ? `🎂 ${b.name}'s ${ordinal(y - b.year)}` : `🎂 ${b.name}'s Birthday`,
+        title: b.year ? `🎂 ${b.name}'s ${ordinal(y - b.year)} Birthday` : `🎂 ${b.name}'s Birthday`,
       }));
   },
 

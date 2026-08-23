@@ -145,10 +145,10 @@ function birthdayHolidayStub(ev, dateStr) {
     reminders: {},
     order: defaultEventOrder(null),
     // Traces this event back to the birthday it came from, so the editor
-    // and details view can find and show that birthday's gift-ideas note
-    // (a field on the birthday record itself, never on this shared event --
-    // see Store.setBirthdayGiftIdeas) even after this occurrence is shared
-    // with other participants. Holidays don't get one; birthdays only.
+    // and details view can find and show YOUR OWN private gift-ideas note
+    // for it (see Store.getMyGiftIdeas/setMyGiftIdeas -- one per viewer,
+    // never a field on this shared event) even after this occurrence is
+    // shared with other participants. Holidays don't get one; birthdays only.
     birthdayId: ev.isBirthday ? ev.birthdayId : null,
   };
 }
@@ -394,10 +394,11 @@ const Calendar = {
   getBirthdayOccurrences(dateStr, peopleIds) {
     const [y, m, d] = dateStr.split('-').map(Number);
     const eventIds = new Set(Store.getEvents().map(e => e.id));
+    const userId = Store.getCurrentUserId();
     // A birthday left at "no color chosen" tracks this live -- if you
     // change your default birthday color later, every birthday that was
     // never individually customized picks up the new default automatically.
-    const defaultColor = Store.getDefaultBirthdayColor(Store.getCurrentUserId()) || HOLIDAY_COLOR;
+    const defaultColor = Store.getDefaultBirthdayColor(userId) || HOLIDAY_COLOR;
     return peopleIds
       .flatMap(ownerId => Store.getBirthdays(ownerId).map(b => ({ ...b, ownerId })))
       .filter(b => b.month === m && b.day === d)
@@ -411,7 +412,14 @@ const Calendar = {
         birthdayId: b.id,
         ownerId: b.ownerId,
         isBirthday: true,
-        color: b.color || defaultColor,
+        // Layering (highest wins): a color YOU picked for this birthday
+        // (Store.birthdayColorFor, set from the Birthdays manager -- your
+        // own preference regardless of who owns the birthday or what they
+        // chose) -> the owner's own chosen color -> your general default.
+        // colorForEvent (calendar render time) still checks a YEAR-specific
+        // eventColorFor override above all of this, for whichever
+        // occurrences you've individually enriched into a real event.
+        color: Store.birthdayColorFor(userId, b.id) || b.color || defaultColor,
         category: null,
         time: null,
         date: dateStr,
@@ -2848,10 +2856,14 @@ const Calendar = {
   // (mirroring openManageCategoriesModal's list+inline-edit pattern) and delete.
   openBirthdaysManager() {
     const userId = Store.getCurrentUserId();
+    // Layering (highest wins), same as getBirthdayOccurrences: your own
+    // per-birthday color pick, then whatever the owner chose, then your
+    // general default -- always resolvable regardless of who owns b.
+    const resolvedColor = b => Store.birthdayColorFor(userId, b.id) || b.color || Store.getDefaultBirthdayColor(userId) || HOLIDAY_COLOR;
 
     const body = `
       <div class="modal-header"><h2>Birthdays</h2><button class="modal-close" id="bd-close">${icon('x')}</button></div>
-      <p class="muted">Private to you, unless you tap one on the calendar and add participants.</p>
+      <p class="muted">Private to you unless you turn "Shared" on -- that opens it up to everyone across all of your households. The color swatch on every row is always just your own, regardless of who added the birthday.</p>
       <div class="field-row" style="align-items:center; margin-bottom:14px;">
         <input type="color" id="bd-default-color" class="color-box" value="${Store.getDefaultBirthdayColor(userId) || HOLIDAY_COLOR}">
         <span class="muted">Default birthday color</span>
@@ -2859,16 +2871,19 @@ const Calendar = {
       <div id="bd-list"></div>
       <div id="bd-form-wrap"></div>
       <button type="button" class="btn" id="bd-add-btn" style="width:100%;margin-top:8px;">+ Add birthday</button>
+      <div id="bd-shared-section"></div>
     `;
     openModal(body, root => {
       root.querySelector('#bd-close').addEventListener('click', closeModal);
       const listEl = root.querySelector('#bd-list');
+      const sharedSectionEl = root.querySelector('#bd-shared-section');
       const formWrap = root.querySelector('#bd-form-wrap');
       const addBtn = root.querySelector('#bd-add-btn');
 
       root.querySelector('#bd-default-color').addEventListener('input', e => {
         Store.saveDefaultBirthdayColor(userId, e.target.value);
         renderList();
+        renderSharedList();
         Calendar.render();
       });
 
@@ -2909,7 +2924,7 @@ const Calendar = {
         formWrap.querySelector('#bd-cancel').addEventListener('click', closeForm);
         if (existing) {
           formWrap.querySelector('#bd-delete').addEventListener('click', () => {
-            Store.saveBirthdays(userId, Store.getBirthdays(userId).filter(b => b.id !== existing.id));
+            Store.deleteBirthday(userId, existing.id);
             closeForm();
             renderList();
             Calendar.render();
@@ -2922,32 +2937,72 @@ const Calendar = {
           const day = parseInt(formWrap.querySelector('#bd-day').value, 10);
           const yearRaw = formWrap.querySelector('#bd-year').value.trim();
           const year = yearRaw ? parseInt(yearRaw, 10) : null;
-          const list = Store.getBirthdays(userId);
-          Store.saveBirthdays(userId, existing
-            ? list.map(b => b.id === existing.id ? { ...b, name, month, day, year, color: chosenColor } : b)
-            : [...list, { id: uid(), name, month, day, year, color: chosenColor }]);
+          if (existing) Store.updateBirthday(userId, existing.id, { name, month, day, year, color: chosenColor });
+          else Store.addBirthday(userId, { name, month, day, year, color: chosenColor });
           closeForm();
           renderList();
           Calendar.render();
         });
       }
 
+      // Only the owner's own list gets the tap-to-edit button and the
+      // Shared toggle -- the personal color swatch is the one control every
+      // row gets regardless of ownership (see renderSharedList below).
       function renderList() {
         const list = Store.getBirthdays(userId).slice().sort((a, b) => a.month - b.month || a.day - b.day);
         listEl.innerHTML = list.length ? '' : '<p class="muted">No birthdays added yet.</p>';
         list.forEach(b => {
-          const row = document.createElement('button');
-          row.type = 'button';
+          const row = document.createElement('div');
           row.className = 'menu-item-row birthday-row';
           row.innerHTML = `
-            <span class="icon-btn" style="pointer-events:none; color:${b.color || Store.getDefaultBirthdayColor(userId) || HOLIDAY_COLOR};">${icon('cake')}</span>
-            <span style="flex:1; text-align:left;">${escapeHTML(b.name)} - ${MONTH_NAMES[b.month - 1]} ${b.day}${b.year ? ', ' + b.year : ''}</span>
+            <input type="color" class="bd-personal-color" value="${resolvedColor(b)}" aria-label="Your color for ${escapeAttr(b.name)}'s birthday">
+            <button type="button" class="menu-item">${escapeHTML(b.name)} - ${MONTH_NAMES[b.month - 1]} ${b.day}${b.year ? ', ' + b.year : ''}</button>
+            <label class="birthday-row-shared-label"><input type="checkbox" ${b.shared ? 'checked' : ''}>Shared</label>
           `;
-          row.addEventListener('click', () => renderForm(b));
+          row.querySelector('.bd-personal-color').addEventListener('input', e => {
+            Store.setBirthdayColor(userId, b.id, e.target.value);
+            Calendar.render();
+          });
+          row.querySelector('.menu-item').addEventListener('click', () => renderForm(b));
+          row.querySelector('.birthday-row-shared-label input').addEventListener('change', e => {
+            Store.setBirthdayShared(userId, b.id, e.target.checked);
+          });
           listEl.appendChild(row);
         });
       }
+
+      // Birthdays other household members have shared with you -- visible
+      // and colorable (your own preference, never theirs), but not editable
+      // or deletable here: only whoever added a birthday can change its
+      // name/date or unshare it.
+      function renderSharedList() {
+        const shared = Store.getSharedBirthdays(userId).slice().sort((a, b) => a.month - b.month || a.day - b.day);
+        if (!shared.length) { sharedSectionEl.innerHTML = ''; return; }
+        sharedSectionEl.innerHTML = `
+          <div class="settings-section" style="margin-top:18px;">
+            <h3>Shared with you</h3>
+            <div id="bd-shared-list"></div>
+          </div>
+        `;
+        const sharedListEl = sharedSectionEl.querySelector('#bd-shared-list');
+        shared.forEach(b => {
+          const owner = Store.getPerson(b.ownerId);
+          const row = document.createElement('div');
+          row.className = 'menu-item-row birthday-row';
+          row.innerHTML = `
+            <input type="color" class="bd-personal-color" value="${resolvedColor(b)}" aria-label="Your color for ${escapeAttr(b.name)}'s birthday">
+            <span class="menu-item" style="cursor:default;">${escapeHTML(b.name)} - ${MONTH_NAMES[b.month - 1]} ${b.day}${b.year ? ', ' + b.year : ''}${owner ? ` <span class="muted">(${escapeHTML(owner.name)})</span>` : ''}</span>
+          `;
+          row.querySelector('.bd-personal-color').addEventListener('input', e => {
+            Store.setBirthdayColor(userId, b.id, e.target.value);
+            Calendar.render();
+          });
+          sharedListEl.appendChild(row);
+        });
+      }
+
       renderList();
+      renderSharedList();
 
       addBtn.addEventListener('click', () => renderForm(null));
     });
@@ -3037,16 +3092,17 @@ const Calendar = {
         <div class="detail-row-content">${escapeHTML(event.notes).replace(/\n/g, '<br>')}</div>
       </div>
     `);
-    // Gift ideas live on the birthday record itself (Store.setBirthdayGiftIdeas),
-    // never on this event -- private to the viewer even when the event is shared.
+    // Your own private gift-ideas note for this birthday (Store.getMyGiftIdeas)
+    // -- independent of who owns the birthday or the event, and invisible to
+    // anyone else, including them.
     if (event.birthdayId) {
-      const birthday = (Store.getBirthdays(userId) || []).find(b => b.id === event.birthdayId);
-      if (birthday && birthday.giftIdeas) rows.push(`
+      const myGiftIdeas = Store.getMyGiftIdeas(userId, event.birthdayId);
+      if (myGiftIdeas) rows.push(`
         <div class="detail-row">
           <span class="detail-row-icon">${icon('gift')}</span>
           <div class="detail-row-content">
             <div class="muted" style="margin-bottom:2px;">Gift ideas</div>
-            <div>${escapeHTML(birthday.giftIdeas).replace(/\n/g, '<br>')}</div>
+            <div>${escapeHTML(myGiftIdeas).replace(/\n/g, '<br>')}</div>
           </div>
         </div>
       `);
@@ -3107,12 +3163,9 @@ const Calendar = {
     // addEvent (not updateEvent, which would silently no-op against an id
     // that doesn't exist in the store yet).
     const isEdit = !!(event && Store.getEvents().some(e => e.id === event.id));
-    // Gift ideas live on the birthday record (Store.setBirthdayGiftIdeas), not
-    // on this event -- stays private to this viewer even once the birthday's
-    // shared with other participants, since it's never written to the event.
-    const giftIdeasBirthday = event && event.birthdayId
-      ? (Store.getBirthdays(userId) || []).find(b => b.id === event.birthdayId)
-      : null;
+    // Your own private gift-ideas note for this birthday (Store.getMyGiftIdeas)
+    // -- never written to the event, and never visible to anyone else viewing it.
+    const myGiftIdeas = event && event.birthdayId ? Store.getMyGiftIdeas(userId, event.birthdayId) : null;
 
     const type = event ? event.type : 'single';
     const baseDate = event ? (event.type === 'custom' ? (event.dates || [dateStr])[0] : event.date) : dateStr;
@@ -3248,7 +3301,7 @@ const Calendar = {
       <div class="field">
         <div class="textarea-with-icon">
           ${icon('gift')}
-          <textarea id="ev-gift-ideas" rows="1" placeholder="Wish list / gift ideas (private to you)">${giftIdeasBirthday && giftIdeasBirthday.giftIdeas ? escapeAttr(giftIdeasBirthday.giftIdeas) : ''}</textarea>
+          <textarea id="ev-gift-ideas" rows="1" placeholder="Wish list / gift ideas (private to you)">${myGiftIdeas ? escapeAttr(myGiftIdeas) : ''}</textarea>
         </div>
       </div>
       ` : ''}
@@ -3481,14 +3534,14 @@ const Calendar = {
       reminderCustomRow.querySelector('#ev-reminder-custom-set').addEventListener('click', commitCustomReminder);
       reminderCustomAmount.addEventListener('keydown', e => { if (e.key === 'Enter') commitCustomReminder(); });
 
-      // Gift ideas save straight to the birthday record on blur, independent
+      // Gift ideas save straight to your own private note on blur, independent
       // of the main Save button -- same "commit immediately" pattern as
       // reminders above, and never bundled into newEvent below since this
       // text must never reach the shared Firestore event document.
       const giftIdeasInput = root.querySelector('#ev-gift-ideas');
       if (giftIdeasInput) {
         giftIdeasInput.addEventListener('blur', () => {
-          Store.setBirthdayGiftIdeas(userId, event.birthdayId, giftIdeasInput.value.trim());
+          Store.setMyGiftIdeas(userId, event.birthdayId, giftIdeasInput.value.trim());
         });
       }
 

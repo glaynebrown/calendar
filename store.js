@@ -5,10 +5,12 @@
    backgrounds -- see the `preferences` collection below) also sync via
    Firestore, per-account rather than per-device, but each getter keeps a
    localStorage fallback for resilience (see the `_pref`/`preferences` note
-   near onDataChange). Everything else (todos, planner content, birthdays,
-   stickers, habits, event presets, holidays-followed) stays in localStorage
-   only: these are intentionally local/session state, not shared calendar
-   content or appearance. */
+   near onDataChange). Birthdays also sync via Firestore (see `birthdays`/
+   `birthdayNotes` below) -- private by default, visible to others only once
+   explicitly shared. Everything else (todos, planner content, stickers,
+   habits, event presets, holidays-followed) stays in localStorage only:
+   these are intentionally local/session state, not shared calendar content
+   or appearance. */
 
 // Auto-assigned colors (new accounts, new categories) before anyone picks
 // their own -- kept soft/muted to match the app's palette, not saturated or
@@ -51,6 +53,8 @@ const _cache = {
   editTrust: [],   // uids the CURRENT signed-in user has mutual edit-trust with (private)
   notes: [],       // own notes plus any shared with the current user (see the `visibleTo` note below)
   preferences: {}, // the CURRENT signed-in user's own synced appearance settings (private)
+  birthdays: [],      // own birthdays plus any shared with the current user (see the `visibleTo` note below)
+  birthdayNotes: [],  // the CURRENT signed-in user's own private gift-idea notes only (private)
 };
 let _unsubscribers = [];
 let _changeListeners = [];
@@ -85,6 +89,21 @@ function computeVisibleTo(participantIds, visibility, customPeople) {
   return Array.from(ids);
 }
 
+// Same denormalized-visibleTo reasoning as computeVisibleTo above, but for
+// a birthday: unshared, only its owner can see it; shared, it opens up to
+// every co-member across ALL of the owner's households at once (option 1
+// from the design discussion -- one flat toggle, not per-household). A
+// Set is what makes sharing safe even when the owner and another person
+// are in more than one household together -- that person's uid only ever
+// lands in here once, so they never end up seeing (or getting synced) a
+// duplicate.
+function computeBirthdayVisibleTo(ownerId, shared) {
+  if (!shared) return [ownerId];
+  const ids = new Set([ownerId]);
+  Store.getHouseholdsFor(ownerId).forEach(h => h.memberIds.forEach(id => ids.add(id)));
+  return Array.from(ids);
+}
+
 const Store = {
   // ---- sync lifecycle: call startSync(uid) after Firebase Auth signs
   // someone in, before rendering the app. Returns a promise that resolves
@@ -92,7 +111,7 @@ const Store = {
   startSync(userId) {
     this.stopSync();
     const db = firebase.firestore();
-    const pending = new Set(['accounts', 'connections-a', 'connections-b', 'households', 'events', 'categories', 'views', 'editTrust', 'notes', 'preferences']);
+    const pending = new Set(['accounts', 'connections-a', 'connections-b', 'households', 'events', 'categories', 'views', 'editTrust', 'notes', 'preferences', 'birthdays', 'birthdayNotes']);
     let resolveReady;
     const ready = new Promise(res => { resolveReady = res; });
     const settle = key => {
@@ -189,6 +208,37 @@ const Store = {
       }
     ));
 
+    // Same visibleTo pattern as events/notes above -- a birthday's
+    // visibleTo is just its owner alone, or the owner plus every
+    // co-member across all their households once shared (see
+    // computeBirthdayVisibleTo/addBirthday/updateBirthday).
+    _unsubscribers.push(db.collection('birthdays').where('visibleTo', 'array-contains', userId).onSnapshot(
+      snap => {
+        _cache.birthdays = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        settle('birthdays'); notify();
+      },
+      err => {
+        console.warn('Birthdays sync failed:', err.code);
+        settle('birthdays'); notify();
+      }
+    ));
+
+    // Private gift-idea notes this user has personally written -- one per
+    // (birthday, author) pair, deliberately scoped to authorUid == me so
+    // this can never accidentally pull in anyone else's notes about a
+    // birthday, even ones they wrote about the SAME birthday (see
+    // getMyGiftIdeas/setMyGiftIdeas and the birthdayNotes rule).
+    _unsubscribers.push(db.collection('birthdayNotes').where('authorUid', '==', userId).onSnapshot(
+      snap => {
+        _cache.birthdayNotes = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        settle('birthdayNotes'); notify();
+      },
+      err => {
+        console.warn('Birthday notes sync failed:', err.code);
+        settle('birthdayNotes'); notify();
+      }
+    ));
+
     return ready;
   },
   stopSync() {
@@ -197,6 +247,7 @@ const Store = {
     _cache.accounts = []; _cache.connections = []; _cache.households = [];
     _cache.events = []; _cache.categories = []; _cache.views = []; _cache.editTrust = [];
     _cache.notes = []; _cache.preferences = {};
+    _cache.birthdays = []; _cache.birthdayNotes = [];
   },
   // Registers a callback fired after every live cache update (i.e. a change
   // made by someone else, or on another device, arrived). main.js uses this
@@ -1065,23 +1116,113 @@ const Store = {
     localStorage.setItem(`fc_showchecked_${userId}`, val ? '1' : '0');
   },
 
-  // ---- birthdays (local to this device, private to you -- see
+  // ---- birthdays (synced to your account -- private by default, visible
+  // only to you, unless you flip a birthday's `shared` flag on in the
+  // Birthdays manager, which opens it up to everyone across all of your
+  // households; see computeBirthdayVisibleTo. _cache.birthdays holds every
+  // birthday visible to the CURRENT signed-in user -- both their own and
+  // whatever others have shared with them -- so getBirthdays(ownerId)
+  // below just filters that down to one owner's, matching how
+  // getBirthdayOccurrences already iterates per visible person. See
   // calendar.js's birthdayHolidayStub for how tapping one on the calendar
-  // can still share a single year's occurrence as a real event) ----
-  getBirthdays(userId) {
-    return readJSON(`fc_birthdays_${userId}`, []);
+  // can still turn a single year's occurrence into a real, separately
+  // visible event. ----
+  getBirthdays(ownerId) {
+    return _cache.birthdays.filter(b => b.ownerId === ownerId);
   },
-  saveBirthdays(userId, list) {
-    writeJSON(`fc_birthdays_${userId}`, list);
+  // Birthdays OTHERS have shared with you -- the Birthdays manager's
+  // second, read-only-except-for-your-own-color section (see
+  // openBirthdaysManager). Never includes your own.
+  getSharedBirthdays(userId) {
+    return _cache.birthdays.filter(b => b.ownerId !== userId);
   },
-  // Gift ideas/wish list notes stick to the birthday itself, not any one
-  // year's event -- carries forward every year, and stays private even if
-  // that year's occurrence gets shared with other participants, since it's
-  // never written anywhere but this local birthday record.
-  setBirthdayGiftIdeas(userId, birthdayId, text) {
-    this.saveBirthdays(userId, this.getBirthdays(userId).map(b =>
-      b.id === birthdayId ? { ...b, giftIdeas: text || null } : b
-    ));
+  addBirthday(userId, birthday) {
+    const id = birthday.id || uid();
+    const shared = !!birthday.shared;
+    const full = { ...birthday, id, ownerId: userId, shared, visibleTo: computeBirthdayVisibleTo(userId, shared) };
+    _cache.birthdays.push(full);
+    firebase.firestore().collection('birthdays').doc(id).set(full);
+  },
+  updateBirthday(userId, id, patch) {
+    const idx = _cache.birthdays.findIndex(b => b.id === id);
+    if (idx < 0) return;
+    const merged = { ..._cache.birthdays[idx], ...patch };
+    if ('shared' in patch) merged.visibleTo = computeBirthdayVisibleTo(userId, merged.shared);
+    _cache.birthdays[idx] = merged;
+    firebase.firestore().collection('birthdays').doc(id).set(merged);
+  },
+  deleteBirthday(userId, id) {
+    _cache.birthdays = _cache.birthdays.filter(b => b.id !== id);
+    firebase.firestore().collection('birthdays').doc(id).delete();
+  },
+  setBirthdayShared(userId, id, shared) {
+    this.updateBirthday(userId, id, { shared: !!shared });
+  },
+  // Gift ideas/wish list notes are private per (birthday, author) pair --
+  // never on the birthday record itself, so a shared birthday never leaks
+  // anyone's notes to anyone else, including the birthday's own owner or
+  // the person it belongs to. Whoever can see a birthday at all (owner or
+  // shared-with) can keep their own independent note -- getMyGiftIdeas
+  // only ever needs to search _cache.birthdayNotes, which the sync
+  // listener already scopes to notes the CURRENT user themselves authored
+  // (see startSync's `where('authorUid','==',userId)`), so there's nothing
+  // to additionally filter by author here.
+  getMyGiftIdeas(userId, birthdayId) {
+    const note = _cache.birthdayNotes.find(n => n.birthdayId === birthdayId);
+    return note ? note.giftIdeas : null;
+  },
+  setMyGiftIdeas(userId, birthdayId, text) {
+    const id = `${birthdayId}_${userId}`;
+    const full = { id, birthdayId, authorUid: userId, giftIdeas: text || null };
+    const idx = _cache.birthdayNotes.findIndex(n => n.id === id);
+    if (idx >= 0) _cache.birthdayNotes[idx] = full; else _cache.birthdayNotes.push(full);
+    firebase.firestore().collection('birthdayNotes').doc(id).set(full);
+  },
+  // Per-viewer birthday color, independent of the owner's own choice --
+  // same "your own display preference always wins" principle as
+  // getEventColorMap above, but keyed by the birthday itself (not one
+  // year's occurrence id) so it's set once in the Birthdays manager and
+  // applies every year, rather than needing to be re-picked annually.
+  // colorForEvent still checks the year-specific eventColorFor override
+  // FIRST (e.g. from actually editing one year's enriched event) -- this
+  // is only the fallback layer below that, baked into the `color` field
+  // getBirthdayOccurrences hands back for whichever years aren't
+  // individually enriched.
+  getBirthdayColorMap(userId) {
+    const synced = this._pref('birthdayColors');
+    return synced !== undefined ? synced : {};
+  },
+  setBirthdayColor(userId, birthdayId, color) {
+    const map = { ...this.getBirthdayColorMap(userId) };
+    if (color) map[birthdayId] = color; else delete map[birthdayId];
+    this._syncPref(userId, 'birthdayColors', map);
+  },
+  birthdayColorFor(userId, birthdayId) {
+    return this.getBirthdayColorMap(userId)[birthdayId] || null;
+  },
+  // One-time: carries over whatever was in this device's old local-only
+  // birthdays storage (from before this synced via Firestore). Checks
+  // real cache state (already populated by the time this runs, since
+  // it's called after startSync resolves) rather than a local flag --
+  // a flag can drift out of sync with reality (see migrateLocalNotesIfNeeded's
+  // own history) -- so a second device signing in later never re-migrates
+  // and clobbers birthdays a first device already synced and edited since.
+  // Migrated birthdays keep whatever local data they had (always private
+  // before this existed), so `shared` starts false either way.
+  async migrateLocalBirthdaysIfNeeded(userId) {
+    if (_cache.birthdays.some(b => b.ownerId === userId)) return;
+    const local = readJSON(`fc_birthdays_${userId}`, []);
+    if (!local.length) return;
+    try {
+      await Promise.all(local.map(b => {
+        const id = b.id || uid();
+        const full = { ...b, id, ownerId: userId, shared: false, visibleTo: computeBirthdayVisibleTo(userId, false) };
+        if (!_cache.birthdays.some(existing => existing.id === id)) _cache.birthdays.push(full);
+        return firebase.firestore().collection('birthdays').doc(id).set(full);
+      }));
+    } catch (err) {
+      console.warn('Birthday migration failed, will retry next sign-in:', err.code);
+    }
   },
 
   // ---- event presets (title -> {time, endTime, category}, saved right from

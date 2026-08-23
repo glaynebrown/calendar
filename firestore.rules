@@ -168,5 +168,28 @@ service cloud.firestore {
       );
       allow delete: if isSignedIn() && request.auth.uid == resource.data.ownerId;
     }
+
+    // Birthday records -- same denormalized-visibleTo pattern as events/notes
+    // above (see store.js's computeBirthdayVisibleTo): unshared, visibleTo is
+    // just the owner; shared, it's the owner plus every co-member across all
+    // of their households at once. Only the owner can create/update/delete --
+    // sharing a birthday makes it visible to others, never editable by them.
+    match /birthdays/{id} {
+      allow read: if isSignedIn() && request.auth.uid in resource.data.visibleTo;
+      allow create: if isSignedIn() && request.auth.uid == request.resource.data.ownerId;
+      allow update, delete: if isSignedIn() && request.auth.uid == resource.data.ownerId;
+    }
+
+    // Private gift-idea notes -- one per (birthday, author) pair, doc id is
+    // "<birthdayId>_<authorUid>" (see store.js's setMyGiftIdeas). Only the
+    // author can ever read or write their own note, regardless of who owns
+    // the birthday it's about -- this is what keeps gift ideas private even
+    // from the birthday's own owner, and independent between two different
+    // people who both wrote notes about the same birthday.
+    match /birthdayNotes/{id} {
+      allow read: if isSignedIn() && request.auth.uid == resource.data.authorUid;
+      allow create: if isSignedIn() && request.auth.uid == request.resource.data.authorUid;
+      allow update, delete: if isSignedIn() && request.auth.uid == resource.data.authorUid;
+    }
   }
 }

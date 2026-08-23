@@ -136,6 +136,7 @@ const App = {
     document.getElementById('loading-screen').classList.add('hidden');
     Store.migrateLocalNotesIfNeeded(user.uid);
     Store.migrateLocalPreferencesIfNeeded(user.uid);
+    Store.migrateLocalBirthdaysIfNeeded(user.uid);
     Store.onDataChange(() => {
       // Re-applies the theme on every cache update, not just ones that
       // actually touched it -- cheap (just sets a few CSS vars/classes) and

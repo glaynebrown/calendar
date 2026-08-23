@@ -137,7 +137,17 @@ function birthdayHolidayStub(ev, dateStr) {
     participantIds: [userId],
     category: null,
     color: ev.color || null,
-    visibility: 'shared',
+    // 'private' (visibleTo = exactly participantIds, no auto-expansion),
+    // not 'shared' -- 'shared' visibility also auto-adds every one of the
+    // acting user's own CONNECTIONS regardless of the participants list,
+    // which defeats the entire point of excluding someone here (e.g. the
+    // birthday person themselves, for a surprise): they're connected to
+    // you by definition (that's how they can see this birthday at all),
+    // so 'shared' would silently re-include them anyway. The Private
+    // checkbox in the editor reflects this correctly (checked by default
+    // for a birthday), and can still be unchecked if broader visibility
+    // is actually wanted.
+    visibility: 'private',
     customPeople: [],
     notes: null,
     location: null,

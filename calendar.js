@@ -3822,7 +3822,17 @@ const Calendar = {
         const endTime = endTimeVal;
         const participantIds = Array.from(ownerMenu.querySelectorAll('input:checked')).map(i => i.value);
         if (!participantIds.length) participantIds.push(userId);
-        const ownerId = participantIds[0];
+        // Editing an existing event must never reassign who owns it -- the
+        // participants checklist always lists the CURRENT viewer first (see
+        // Store.getKnownPeople), so deriving ownerId from "whoever's first
+        // in the picker" silently handed ownership to whoever last saved
+        // the event, regardless of who actually created it. That's wrong
+        // both for who a shared event displays as (ownerId drives which
+        // person-color it falls back to for everyone) and for edit
+        // permissions going forward. Only a brand-new event still picks its
+        // owner from the participant selection -- there's no prior owner to
+        // preserve yet.
+        const ownerId = isEdit ? event.ownerId : participantIds[0];
         const category = categoryVal;
         if (category) Store.addCategory(category);
 

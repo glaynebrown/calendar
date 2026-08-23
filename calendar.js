@@ -476,12 +476,16 @@ const Calendar = {
     // getBirthdayOccurrences/getHolidayOccurrences) -- real events never
     // have this field at all, so this is a no-op for them.
     if (ev.color) return ev.color;
-    // A category only overrides the owner's own color if it actually has
-    // one set -- categories no longer auto-assign a color just by
-    // existing (see Store.categoryColorFor), specifically so a shared
-    // category like "Appointments" can group everyone's events together
-    // for filtering while each person's own still shows in their own color.
-    if (ev.ownerId === userId && ev.category) {
+    // A category only overrides the owner's own color if the CURRENT
+    // VIEWER has actually set one -- categories never auto-assign a color
+    // just by existing (see Store.categoryColorFor), so this is fully
+    // opt-in per person, regardless of who owns the event. Someone who
+    // never bothers with it (e.g. a connection who doesn't care about your
+    // categories) always just sees the owner's own color, unaffected --
+    // but anyone who DOES pick a color for a shared category (e.g. "Kids")
+    // gets every event tagged with it grouped into that one color on
+    // their own calendar, no matter who added each one.
+    if (ev.category) {
       const catColor = Store.categoryColorFor(userId, ev.category);
       if (catColor) return catColor;
     }

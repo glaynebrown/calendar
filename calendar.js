@@ -2614,6 +2614,27 @@ const Calendar = {
     const gridEl = document.getElementById('calendar-grid');
     gridEl.className = 'calendar-grid';
     gridEl.innerHTML = '';
+    // Locks this element to whatever height it naturally gets from the rest
+    // of the page's layout (topbar, weekday row, bottom tabs) -- must
+    // happen now, while genuinely empty, since a flex item's own height
+    // isn't actually capped by flex:1 once its content needs more room
+    // (see the min-height:0 comment on .calendar-grid in styles.css).
+    gridEl.style.height = '';
+    const lockedGridHeight = gridEl.getBoundingClientRect().height;
+    gridEl.style.height = lockedGridHeight + 'px';
+    // Locking the grid's own height isn't enough by itself -- a CSS grid
+    // row still grows to fit its tallest cell's content even under
+    // grid-auto-rows:minmax(0,1fr) and overflow:hidden (confirmed the hard
+    // way: a single busy day pulled its *entire week's row* taller,
+    // pushing the whole grid past its locked height rather than clipping).
+    // Giving every cell its OWN explicit height directly -- rather than
+    // leaving row sizing to the grid's fr-distribution -- is what actually
+    // prevents that, and is also what makes cell.clientHeight in the
+    // fitting pass below trustworthy: without this, that read would
+    // reflect a row that already inflated to fit the very overflow it's
+    // trying to detect.
+    const numRows = gridDates.length / 7;
+    const rowHeight = lockedGridHeight / numRows;
 
     const BAR_SLOT = 16;
     const barCoverageByDate = {};
@@ -2627,6 +2648,7 @@ const Calendar = {
       const ds = formatISO(d);
       const cell = document.createElement('div');
       cell.className = 'day-cell' + (d.getMonth() !== month ? ' outside' : '') + (ds === todayStr ? ' today' : '');
+      cell.style.height = rowHeight + 'px';
 
       const num = document.createElement('div');
       num.className = 'day-num';
@@ -2640,8 +2662,15 @@ const Calendar = {
         cell.appendChild(spacer);
       }
 
+      // Every chip is added here, unsliced -- how many actually FIT depends
+      // on this cell's real rendered height, which isn't known until the
+      // whole grid has been laid out (a 5-week vs 6-week month, or a
+      // different screen size, gives every cell a different share of the
+      // available space; see grid-auto-rows:1fr in styles.css). The
+      // fitDayCellChips pass below trims each cell down to what its own
+      // geometry actually allows, once that's measurable.
       const dayEvents = (dateMap[ds] || []).slice().sort(compareEventOrder(ds));
-      dayEvents.slice(0, 3).forEach(ev => {
+      dayEvents.forEach(ev => {
         const chip = document.createElement('div');
         chip.className = 'event-chip';
         chip.textContent = ev.title;
@@ -2653,12 +2682,6 @@ const Calendar = {
         });
         cell.appendChild(chip);
       });
-      if (dayEvents.length > 3) {
-        const more = document.createElement('div');
-        more.className = 'event-more';
-        more.textContent = `+${dayEvents.length - 3} more`;
-        cell.appendChild(more);
-      }
 
       const hasAnyEvents = dayEvents.length > 0 || multiDayEvents.some(ev => ev.date <= ds && ev.endDate >= ds);
       cell.addEventListener('click', () => {
@@ -2667,6 +2690,37 @@ const Calendar = {
       });
       gridEl.appendChild(cell);
       dayCellEls.push(cell);
+    });
+
+    // Now that every cell has its real, laid-out height (see the comment
+    // above where chips are added), trim each one's chip list down to
+    // whatever actually fits, replacing the rest with a "+N more" label --
+    // rather than a fixed guess at how many chips a cell can hold.
+    dayCellEls.forEach(cell => {
+      const chips = Array.from(cell.querySelectorAll('.event-chip'));
+      if (!chips.length) return;
+      const limit = cell.clientHeight;
+      let hiddenCount = 0;
+      while (hiddenCount < chips.length) {
+        const lastVisible = chips[chips.length - 1 - hiddenCount];
+        if (lastVisible.offsetTop + lastVisible.offsetHeight <= limit) break;
+        hiddenCount++;
+      }
+      if (hiddenCount === 0) return;
+      for (let i = 0; i < hiddenCount; i++) cell.removeChild(chips[chips.length - 1 - i]);
+      const more = document.createElement('div');
+      more.className = 'event-more';
+      more.textContent = `+${hiddenCount} more`;
+      cell.appendChild(more);
+      // The label itself takes up a slot too -- if making room for it just
+      // pushed IT past the bottom edge, drop one more chip and grow the count.
+      while (more.offsetTop + more.offsetHeight > limit) {
+        const remainingChips = cell.querySelectorAll('.event-chip');
+        if (!remainingChips.length) break;
+        cell.removeChild(remainingChips[remainingChips.length - 1]);
+        hiddenCount++;
+        more.textContent = `+${hiddenCount} more`;
+      }
     });
 
     // Render multi-day events as bars spanning their day columns, one week-row at a time.

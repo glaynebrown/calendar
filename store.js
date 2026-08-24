@@ -77,12 +77,23 @@ function connectionDocId(a, b) {
 // author, not their full connection list, until it's next edited by one of
 // them directly (their own client then fills in the rest).
 function computeVisibleTo(participantIds, visibility, customPeople) {
-  if (visibility === 'private') return participantIds;
-  if (visibility === 'custom') return Array.from(new Set([...participantIds, ...(customPeople || [])]));
-  // 'shared' -- every participant, plus (for whichever participant is the
-  // current user) their own connections too.
+  // Whoever is actually authoring/saving this always stays able to see it,
+  // regardless of visibility mode or whether they included themselves as a
+  // participant -- e.g. "an appointment for Nick," entered by Bella with
+  // only Nick checked as the participant. Without this, that write still
+  // succeeds (Firestore rules only care about edit-trust, not visibleTo
+  // membership) but the author's OWN device -- which only ever fetches
+  // events where visibleTo contains their own uid -- silently loses the
+  // event the moment it re-syncs from real data (e.g. on next app launch),
+  // even though it's sitting right there on the server the whole time.
+  // Confirmed live: authoring with only Nick as participant produced
+  // visibleTo=[nick], excluding the author entirely.
   const currentUserId = Store.getCurrentUserId();
-  const ids = new Set(participantIds);
+  if (visibility === 'private') return Array.from(new Set([...participantIds, currentUserId]));
+  if (visibility === 'custom') return Array.from(new Set([...participantIds, ...(customPeople || []), currentUserId]));
+  // 'shared' -- every participant, plus (for whichever participant is the
+  // current user) their own connections too, plus the author themselves.
+  const ids = new Set([...participantIds, currentUserId]);
   participantIds.forEach(pid => {
     if (pid === currentUserId) Store.getConnectedIds(pid).forEach(id => ids.add(id));
   });

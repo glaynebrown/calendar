@@ -3579,8 +3579,22 @@ const Calendar = {
         if (!file) return;
         const reader = new FileReader();
         reader.onload = () => {
-          attachmentVal = { name: file.name, type: file.type, dataUrl: reader.result };
-          refreshAttachmentPreview();
+          // Only images can be downscaled this way -- a PDF/doc attachment
+          // passes through unchanged (see compressImageDataUrl's own
+          // comment in settings.js for why this matters at all: an
+          // uncompressed photo can easily blow past this event's own
+          // 1MiB Firestore document limit on its own).
+          const finish = dataUrl => {
+            attachmentVal = { name: file.name, type: file.type, dataUrl };
+            refreshAttachmentPreview();
+          };
+          if (file.type.startsWith('image/')) {
+            compressImageDataUrl(reader.result, 1600, 0.75).then(finish).catch(() => {
+              alert("Couldn't process that image -- try a different one.");
+            });
+          } else {
+            finish(reader.result);
+          }
         };
         reader.readAsDataURL(file);
       });

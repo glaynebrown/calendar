@@ -151,6 +151,19 @@ service cloud.firestore {
       allow read, write: if isSignedIn() && request.auth.uid == uid;
     }
 
+    // Each month's background lives in its own document, one per month
+    // index, rather than a field on the shared preferences doc above --
+    // see store.js's getMonthThemes for why (a single photo can otherwise
+    // blow past Firestore's 1MiB-per-document cap and crowd out
+    // everything else in that shared doc). Same fully-private, owner-only
+    // shape either way.
+    match /preferences/{uid}/monthThemes/{monthIndex} {
+      allow read, write: if isSignedIn() && request.auth.uid == uid;
+    }
+    match /preferences/{uid}/plannerMonthThemes/{monthIndex} {
+      allow read, write: if isSignedIn() && request.auth.uid == uid;
+    }
+
     // To-do lists / sticky notes. Read: same denormalized-visibleTo pattern
     // as events (see the comment there) -- visibleTo is just
     // [ownerId, ...sharedWith], computed client-side in store.js's

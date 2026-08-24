@@ -106,6 +106,35 @@ function extractAverageColor(dataUrl, callback) {
   img.src = dataUrl;
 }
 
+// Downscales and re-encodes an uploaded photo before it's ever stored --
+// Firestore hard-caps every document at 1MiB, and a photo straight off a
+// phone camera can easily be several MB as a raw base64 data URL (confirmed
+// the hard way: two uncompressed month photos alone filled 880KB of the
+// shared preferences document). 1600px on the longer side and JPEG at 0.75
+// quality keeps a background photo comfortably under a few hundred KB while
+// still looking sharp at any screen size this app runs at, and the same
+// helper covers event attachments (see calendar.js) so a photo attached to
+// an event can't silently blow past that event's own document limit either.
+function compressImageDataUrl(dataUrl, maxDim, quality) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      let { width, height } = img;
+      if (width > maxDim || height > maxDim) {
+        if (width > height) { height = Math.round(height * maxDim / width); width = maxDim; }
+        else { width = Math.round(width * maxDim / height); height = maxDim; }
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+      resolve(canvas.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = () => reject(new Error('Could not load image for compression'));
+    img.src = dataUrl;
+  });
+}
+
 function applyBackgroundForMonth(monthIndex) {
   const override = Store.getMonthTheme(String(monthIndex));
   const resolved = override ? { ...Store.getTheme(), ...override } : Store.getTheme();
@@ -220,12 +249,16 @@ function wireThemeEditor(root, idPrefix, existing) {
     if (!file) return;
     const reader = new FileReader();
     reader.onload = () => {
-      photoDataUrl = reader.result;
-      extractAverageColor(photoDataUrl, hex => { colorInput.value = hex; refreshBgGrid(); });
-      photoBtn.classList.add('active');
-      photoClearBtn.classList.remove('hidden');
-      fitSelect.classList.remove('hidden');
-      borderNote.style.display = '';
+      compressImageDataUrl(reader.result, 1600, 0.75).then(compressed => {
+        photoDataUrl = compressed;
+        extractAverageColor(photoDataUrl, hex => { colorInput.value = hex; refreshBgGrid(); });
+        photoBtn.classList.add('active');
+        photoClearBtn.classList.remove('hidden');
+        fitSelect.classList.remove('hidden');
+        borderNote.style.display = '';
+      }).catch(() => {
+        alert("Couldn't process that photo -- try a different one.");
+      });
     };
     reader.readAsDataURL(file);
   });
@@ -776,16 +809,19 @@ const Settings = {
         if (!file) return;
         const reader = new FileReader();
         reader.onload = () => {
-          const photoDataUrl = reader.result;
-          extractAverageColor(photoDataUrl, avgColor => {
-            const newTheme = { ...Store.getTheme(), bgPhoto: photoDataUrl, bgColor: null, bgAutoColor: avgColor, bgFit: Store.getTheme().bgFit || 'fit' };
-            Store.saveTheme(newTheme);
-            applyBackgroundForMonth(Calendar.getRelevantMonthIndex());
-            refreshBgGrid('');
-            bgPhotoBtn.classList.add('active');
-            bgPhotoClear.classList.remove('hidden');
-            bgFitSelect.classList.remove('hidden');
-            borderWrap.classList.remove('hidden');
+          compressImageDataUrl(reader.result, 1600, 0.75).then(photoDataUrl => {
+            extractAverageColor(photoDataUrl, avgColor => {
+              const newTheme = { ...Store.getTheme(), bgPhoto: photoDataUrl, bgColor: null, bgAutoColor: avgColor, bgFit: Store.getTheme().bgFit || 'fit' };
+              Store.saveTheme(newTheme);
+              applyBackgroundForMonth(Calendar.getRelevantMonthIndex());
+              refreshBgGrid('');
+              bgPhotoBtn.classList.add('active');
+              bgPhotoClear.classList.remove('hidden');
+              bgFitSelect.classList.remove('hidden');
+              borderWrap.classList.remove('hidden');
+            });
+          }).catch(() => {
+            alert("Couldn't process that photo -- try a different one.");
           });
         };
         reader.readAsDataURL(file);

@@ -55,6 +55,8 @@ const _cache = {
   preferences: {}, // the CURRENT signed-in user's own synced appearance settings (private)
   birthdays: [],      // own birthdays plus any shared with the current user (see the `visibleTo` note below)
   birthdayNotes: [],  // the CURRENT signed-in user's own private gift-idea notes only (private)
+  monthThemes: {}, monthThemesReady: false,               // own per-month background overrides, one Firestore doc each (private)
+  plannerMonthThemes: {}, plannerMonthThemesReady: false,  // same, for the planner's own override tier (private)
 };
 let _unsubscribers = [];
 let _changeListeners = [];
@@ -124,7 +126,7 @@ const Store = {
   startSync(userId) {
     this.stopSync();
     const db = firebase.firestore();
-    const pending = new Set(['accounts', 'connections-a', 'connections-b', 'households', 'events', 'categories', 'views', 'editTrust', 'notes', 'preferences', 'birthdays', 'birthdayNotes']);
+    const pending = new Set(['accounts', 'connections-a', 'connections-b', 'households', 'events', 'categories', 'views', 'editTrust', 'notes', 'preferences', 'birthdays', 'birthdayNotes', 'monthThemes', 'plannerMonthThemes']);
     let resolveReady;
     const ready = new Promise(res => { resolveReady = res; });
     const settle = key => {
@@ -252,6 +254,42 @@ const Store = {
       }
     ));
 
+    // Each month's background lives in its OWN document (see the comment
+    // on getMonthThemes/setMonthTheme for why) -- this listens to the
+    // whole subcollection at once and rebuilds the keyed-by-month-index
+    // object every getter already expects. monthThemesReady only flips
+    // true on a SUCCESSFUL snapshot, deliberately unlike notes'/birthdays'
+    // own error handlers above -- those have nothing worth falling back to
+    // on failure, but this does (this device's local mirror of
+    // already-saved photos), and a rules-deploy gap must never make an
+    // already-saved photo look like it vanished just because the read
+    // failed. Leaving it false on error means getMonthThemes() keeps
+    // trusting the local fallback until a real snapshot actually arrives.
+    _unsubscribers.push(db.collection('preferences').doc(userId).collection('monthThemes').onSnapshot(
+      snap => {
+        _cache.monthThemes = {};
+        snap.docs.forEach(d => { _cache.monthThemes[d.id] = d.data(); });
+        _cache.monthThemesReady = true;
+        settle('monthThemes'); notify();
+      },
+      err => {
+        console.warn('Month themes sync failed:', err.code);
+        settle('monthThemes'); notify();
+      }
+    ));
+    _unsubscribers.push(db.collection('preferences').doc(userId).collection('plannerMonthThemes').onSnapshot(
+      snap => {
+        _cache.plannerMonthThemes = {};
+        snap.docs.forEach(d => { _cache.plannerMonthThemes[d.id] = d.data(); });
+        _cache.plannerMonthThemesReady = true;
+        settle('plannerMonthThemes'); notify();
+      },
+      err => {
+        console.warn('Planner month themes sync failed:', err.code);
+        settle('plannerMonthThemes'); notify();
+      }
+    ));
+
     return ready;
   },
   stopSync() {
@@ -261,6 +299,8 @@ const Store = {
     _cache.events = []; _cache.categories = []; _cache.views = []; _cache.editTrust = [];
     _cache.notes = []; _cache.preferences = {};
     _cache.birthdays = []; _cache.birthdayNotes = [];
+    _cache.monthThemes = {}; _cache.monthThemesReady = false;
+    _cache.plannerMonthThemes = {}; _cache.plannerMonthThemesReady = false;
   },
   // Registers a callback fired after every live cache update (i.e. a change
   // made by someone else, or on another device, arrived). main.js uses this
@@ -1026,10 +1066,22 @@ const Store = {
     this._syncPref(userId, 'theme', theme);
   },
 
-  // ---- per-account month background overrides (keyed by month index 0-11, repeats yearly) ----
+  // ---- per-account month background overrides (keyed by month index 0-11,
+  // repeats yearly) -- each month is its OWN Firestore document
+  // (preferences/{uid}/monthThemes/{monthIndex}), not a field bundled into
+  // the shared preferences doc. That used to be exactly where a photo
+  // lived, and Firestore hard-caps every document at 1MiB -- two
+  // uncompressed month photos alone filled 880KB of that shared doc,
+  // silently failing (and reverting a moment later) the instant a third
+  // was added, and crowding out theme/colors/etc. too. Splitting each
+  // month into its own document means one month's photo can never crowd
+  // out another's, or anything else. _cache.monthThemesReady distinguishes
+  // "genuinely no overrides" from "hasn't synced yet" -- unlike the other
+  // _pref-backed settings, an empty {} here is a legitimate synced state,
+  // not just the pre-sync default, so falling back to the local mirror has
+  // to stop the instant the real (possibly also empty) data arrives. ----
   getMonthThemes() {
-    const synced = this._pref('monthThemes');
-    if (synced !== undefined) return synced;
+    if (_cache.monthThemesReady) return _cache.monthThemes;
     return readJSON('fc_monthThemes', {});
   },
   getMonthTheme(monthIndex) {
@@ -1040,16 +1092,18 @@ const Store = {
     if (theme) themes[monthIndex] = theme;
     else delete themes[monthIndex];
     writeJSON('fc_monthThemes', themes);
-    this._syncPref(this.getCurrentUserId(), 'monthThemes', themes);
+    _cache.monthThemes = themes;
+    const ref = firebase.firestore().collection('preferences').doc(this.getCurrentUserId()).collection('monthThemes').doc(String(monthIndex));
+    const write = theme ? ref.set(theme) : ref.delete();
+    write.catch(err => console.warn('Month theme save failed:', err.code));
   },
 
   // ---- per-account planner background overrides (keyed by month index
   // 0-11, same as month themes -- planner falls back to the month theme,
   // then the global default, whenever no planner-specific override is
-  // saved) ----
+  // saved). Same own-document-per-month reasoning as monthThemes above. ----
   getPlannerMonthThemes() {
-    const synced = this._pref('plannerMonthThemes');
-    if (synced !== undefined) return synced;
+    if (_cache.plannerMonthThemesReady) return _cache.plannerMonthThemes;
     return readJSON('fc_plannerMonthThemes', {});
   },
   getPlannerMonthTheme(monthIndex) {
@@ -1060,7 +1114,10 @@ const Store = {
     if (theme) themes[monthIndex] = theme;
     else delete themes[monthIndex];
     writeJSON('fc_plannerMonthThemes', themes);
-    this._syncPref(this.getCurrentUserId(), 'plannerMonthThemes', themes);
+    _cache.plannerMonthThemes = themes;
+    const ref = firebase.firestore().collection('preferences').doc(this.getCurrentUserId()).collection('plannerMonthThemes').doc(String(monthIndex));
+    const write = theme ? ref.set(theme) : ref.delete();
+    write.catch(err => console.warn('Planner month theme save failed:', err.code));
   },
 
   // ---- todos/notes: synced via Firestore (like events), not localStorage,
@@ -1298,8 +1355,10 @@ const Store = {
         personColors: readJSON(`fc_colors_${userId}`, {}),
         eventColors: readJSON(`fc_eventcolors_${userId}`, {}),
         theme: readJSON('fc_theme', this.getTheme()),
-        monthThemes: readJSON('fc_monthThemes', {}),
-        plannerMonthThemes: readJSON('fc_plannerMonthThemes', {}),
+        // monthThemes/plannerMonthThemes are NOT seeded here -- they get
+        // their own documents now (see migrateMonthThemesIfNeeded), not a
+        // field on this shared doc, specifically so a background photo can
+        // never crowd out theme/colors/etc. or another month's photo.
         holidayColor: localStorage.getItem(`fc_holidayColor_${userId}`) || null,
         defaultBirthdayColor: localStorage.getItem(`fc_defaultBirthdayColor_${userId}`) || null,
       };
@@ -1307,6 +1366,47 @@ const Store = {
       _cache.preferences = { ..._cache.preferences, ...seed };
     } catch (err) {
       console.warn('Preferences migration failed, will retry next sign-in:', err.code);
+    }
+  },
+  // One-time: moves month/planner background overrides into their own
+  // per-month documents (see getMonthThemes' own comment for why they no
+  // longer live as a field on the shared preferences doc). Two possible
+  // sources, checked in order: the OLD embedded fields on the preferences
+  // doc (if migrateLocalPreferencesIfNeeded already ran and put them
+  // there, back when it still did), or this device's raw local copy (if
+  // NEITHER migration has ever run yet). Must run after
+  // migrateLocalPreferencesIfNeeded, not before -- it relies on the
+  // preferences doc already existing to delete the old fields from it.
+  // Checks the real subcollection for existing docs (not a flag) before
+  // doing anything, so a second device signing in later never re-seeds and
+  // clobbers month themes a first device already synced and changed since.
+  async migrateMonthThemesIfNeeded(userId) {
+    const db = firebase.firestore();
+    const prefsRef = db.collection('preferences').doc(userId);
+    const monthRef = prefsRef.collection('monthThemes');
+    const plannerRef = prefsRef.collection('plannerMonthThemes');
+    try {
+      const already = await monthRef.limit(1).get();
+      if (!already.empty) return;
+      const prefsDoc = await prefsRef.get();
+      const prefsData = prefsDoc.data() || {};
+      const monthThemes = prefsData.monthThemes || readJSON('fc_monthThemes', {});
+      const plannerMonthThemes = prefsData.plannerMonthThemes || readJSON('fc_plannerMonthThemes', {});
+      if (!Object.keys(monthThemes).length && !Object.keys(plannerMonthThemes).length) return;
+      const batch = db.batch();
+      Object.entries(monthThemes).forEach(([idx, theme]) => batch.set(monthRef.doc(idx), theme));
+      Object.entries(plannerMonthThemes).forEach(([idx, theme]) => batch.set(plannerRef.doc(idx), theme));
+      if (prefsData.monthThemes || prefsData.plannerMonthThemes) {
+        batch.update(prefsRef, {
+          monthThemes: firebase.firestore.FieldValue.delete(),
+          plannerMonthThemes: firebase.firestore.FieldValue.delete(),
+        });
+      }
+      await batch.commit();
+      _cache.monthThemes = monthThemes;
+      _cache.plannerMonthThemes = plannerMonthThemes;
+    } catch (err) {
+      console.warn('Month theme migration failed, will retry next sign-in:', err.code);
     }
   },
 };

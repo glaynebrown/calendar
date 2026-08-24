@@ -135,7 +135,10 @@ const App = {
     await Store.startSync(user.uid);
     document.getElementById('loading-screen').classList.add('hidden');
     Store.migrateLocalNotesIfNeeded(user.uid);
-    Store.migrateLocalPreferencesIfNeeded(user.uid);
+    // Chained, not fired in parallel -- migrateMonthThemesIfNeeded deletes
+    // fields off the preferences doc that migrateLocalPreferencesIfNeeded
+    // is responsible for creating, so it has to run strictly after.
+    Store.migrateLocalPreferencesIfNeeded(user.uid).then(() => Store.migrateMonthThemesIfNeeded(user.uid));
     Store.migrateLocalBirthdaysIfNeeded(user.uid);
     Store.onDataChange(() => {
       // Re-applies the theme on every cache update, not just ones that

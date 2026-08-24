@@ -71,12 +71,7 @@ function connectionDocId(a, b) {
 // opposed to a single-doc get) against conditions the query itself proves,
 // so an array-contains field is the standard way to make "which events can I
 // see" both a valid live query and a valid rule (see firestore.rules).
-// Limitation: when authoring an event as someone else (the Participants
-// picker), this client may not know that person's *other* connections, so a
-// 'shared' event tagging them is only guaranteed visible to them and the
-// author, not their full connection list, until it's next edited by one of
-// them directly (their own client then fills in the rest).
-function computeVisibleTo(participantIds, visibility, customPeople) {
+function computeVisibleTo(ownerId, participantIds, visibility, customPeople) {
   // Whoever is actually authoring/saving this always stays able to see it,
   // regardless of visibility mode or whether they included themselves as a
   // participant -- e.g. "an appointment for Nick," entered by Bella with
@@ -86,14 +81,21 @@ function computeVisibleTo(participantIds, visibility, customPeople) {
   // events where visibleTo contains their own uid -- silently loses the
   // event the moment it re-syncs from real data (e.g. on next app launch),
   // even though it's sitting right there on the server the whole time.
-  // Confirmed live: authoring with only Nick as participant produced
-  // visibleTo=[nick], excluding the author entirely.
   const currentUserId = Store.getCurrentUserId();
   if (visibility === 'private') return Array.from(new Set([...participantIds, currentUserId]));
   if (visibility === 'custom') return Array.from(new Set([...participantIds, ...(customPeople || []), currentUserId]));
-  // 'shared' -- every participant, plus (for whichever participant is the
-  // current user) their own connections too, plus the author themselves.
+  // 'shared' -- every participant, the author, every household co-member of
+  // the event's OWNER, and (for whichever participant is the current user)
+  // their own plain connections too. The household expansion is what makes
+  // "shared" actually mean "my household can see it" rather than "only
+  // whoever I explicitly tagged" -- mirroring how household edit-trust
+  // already lets any co-member edit ANY of your events without being
+  // tagged on them (see addEditTrust/reconcileHouseholdTies); being unable
+  // to even SEE an event without being individually tagged was backwards
+  // relative to that. 'private' remains the one deliberate opt-out (e.g.
+  // excluding the birthday person from their own surprise).
   const ids = new Set([...participantIds, currentUserId]);
+  Store.getHouseholdsFor(ownerId).forEach(h => h.memberIds.forEach(id => ids.add(id)));
   participantIds.forEach(pid => {
     if (pid === currentUserId) Store.getConnectedIds(pid).forEach(id => ids.add(id));
   });
@@ -563,7 +565,7 @@ const Store = {
   addEvent(event) {
     const id = event.id || uid();
     const participantIds = event.participantIds || [event.ownerId];
-    const visibleTo = computeVisibleTo(participantIds, event.visibility, event.customPeople);
+    const visibleTo = computeVisibleTo(event.ownerId, participantIds, event.visibility, event.customPeople);
     const full = { ...event, id, participantIds, visibleTo };
     _cache.events.push(full);
     firebase.firestore().collection('events').doc(id).set(full);
@@ -574,7 +576,7 @@ const Store = {
     const merged = { ..._cache.events[idx], ...patch };
     if ('visibility' in patch || 'customPeople' in patch || 'ownerId' in patch || 'participantIds' in patch) {
       const participantIds = merged.participantIds || [merged.ownerId];
-      merged.visibleTo = computeVisibleTo(participantIds, merged.visibility, merged.customPeople);
+      merged.visibleTo = computeVisibleTo(merged.ownerId, participantIds, merged.visibility, merged.customPeople);
     }
     _cache.events[idx] = merged;
     firebase.firestore().collection('events').doc(id).set(merged);

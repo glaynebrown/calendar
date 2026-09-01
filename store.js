@@ -104,6 +104,25 @@ function computeVisibleTo(ownerId, participantIds, visibility, customPeople) {
   return Array.from(ids);
 }
 
+// Whether an event has any occurrence today or later -- used only by
+// reconcileHouseholdTies's visibility backfill below, to decide whether a
+// newly-joined household member should be added to an OLD event's
+// visibility at all. Deliberately excludes anything entirely in the past,
+// even if it's otherwise missing a current household member, so a new
+// member's calendar doesn't get flooded with old one-off history -- an
+// ongoing or still-recurring series still counts, even if it originally
+// started before they joined (see the design discussion this came from).
+// expandOccurrences/formatISO are calendar.js's pure date-math helpers --
+// safe to call from here since this only ever runs from main.js's
+// onSignedIn, well after every script has loaded.
+function eventHasUpcomingRelevance(event, todayStr) {
+  if (event.type === 'single' && event.endDate && event.endDate > event.date) {
+    return event.endDate >= todayStr;
+  }
+  const farFutureStr = formatISO(new Date(new Date().getFullYear() + 2, 11, 31));
+  return expandOccurrences(event, todayStr, farFutureStr).length > 0;
+}
+
 // Same denormalized-visibleTo reasoning as computeVisibleTo above, but for
 // a birthday: unshared, only its owner can see it; shared, it opens up to
 // every co-member across ALL of the owner's households at once (option 1
@@ -492,12 +511,37 @@ const Store = {
   // partially landed) -- addConnection/addEditTrust are both no-ops if the
   // tie already exists, so running this on every sign-in is cheap and safe.
   reconcileHouseholdTies(userId) {
-    this.getHouseholdsFor(userId).forEach(h => {
+    const households = this.getHouseholdsFor(userId);
+    households.forEach(h => {
       h.memberIds.filter(id => id !== userId).forEach(otherId => {
         if (!this.isConnected(userId, otherId)) this.addConnection(userId, otherId);
         if (!this.isEditTrusted(otherId)) this.addEditTrust(userId, otherId);
       });
     });
+    // Backfills visibility on this user's own SHARED events for anyone
+    // newly in their household who isn't in visibleTo yet -- visibleTo is
+    // only ever computed once, at write time (see computeVisibleTo), so
+    // someone who joins a household later never automatically becomes
+    // able to see events created before they joined without this running.
+    // Cheap to run every sign-in: it only reads the already-synced local
+    // cache (no extra Firestore reads), and only ever WRITES for events
+    // that are both missing someone AND still relevant today or later
+    // (see eventHasUpcomingRelevance) -- once caught up, this is a no-op
+    // until the next new member joins. Private events are never touched:
+    // computeVisibleTo doesn't expand those by household membership at
+    // all, so there's nothing here to fix for them.
+    const currentMemberIds = new Set();
+    households.forEach(h => h.memberIds.forEach(id => { if (id !== userId) currentMemberIds.add(id); }));
+    if (!currentMemberIds.size) return;
+    const todayStr = formatISO(new Date());
+    _cache.events
+      .filter(e => e.ownerId === userId && e.visibility === 'shared')
+      .forEach(e => {
+        const missing = Array.from(currentMemberIds).filter(id => !e.visibleTo.includes(id));
+        if (!missing.length) return;
+        if (!eventHasUpcomingRelevance(e, todayStr)) return;
+        this.updateEvent(e.id, { visibleTo: Array.from(new Set([...e.visibleTo, ...missing])) });
+      });
   },
   getHouseholdsFor(userId) {
     return _cache.households.filter(h => h.memberIds.includes(userId));

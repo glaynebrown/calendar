@@ -286,7 +286,12 @@ const Todo = {
       // focus and dismiss the on-screen keyboard on mobile between items.
       // Instead just drop the new row in and clear the input in place, so
       // hitting return moves straight to a fresh line without interruption.
-      function commitAdd() {
+      // keepFocus: false when committing because the user clicked/tapped
+      // away (see the blur handler below) -- stealing focus back onto an
+      // input they just left would fight the very thing they did, and on
+      // iOS would likely pop the keyboard back open right after they
+      // dismissed it.
+      function commitAdd(keepFocus = true) {
         const text = addInput.value.trim();
         if (!text) return;
         note.items = note.items || [];
@@ -295,6 +300,7 @@ const Todo = {
         Store.updateNote(note.id, { items: note.items });
         itemsContainer.appendChild(buildItemRow(newItem));
         addInput.value = '';
+        if (!keepFocus) return;
         // iOS Safari's on-screen keyboard treats Return on a plain text
         // input as "done" and starts dismissing it the instant the keydown
         // fires -- calling focus() synchronously, in the same handler,
@@ -311,13 +317,16 @@ const Todo = {
         // user tapped away -- a live-sync re-render (see render()'s comment)
         // removes and rebuilds this exact input too, which fires blur on
         // the outgoing one an instant before the new one gets refocused.
-        // Give that refocus a moment to happen, then only collapse if
-        // nothing in this note's add row actually ended up focused.
+        // Give that refocus a moment to happen, then only act if nothing in
+        // this note's add row actually ended up focused.
         setTimeout(() => {
           const stillFocused = document.activeElement && document.activeElement.closest
             && document.activeElement.closest(`.note-card[data-id="${note.id}"] .note-add-item`);
           if (stillFocused) return;
-          if (!addInput.value.trim() && Todo.expandedAddFor === note.id) {
+          // Tapping away with something typed saves it, same as pressing
+          // Enter would have -- previously this only ever discarded it.
+          if (addInput.value.trim()) commitAdd(false);
+          if (Todo.expandedAddFor === note.id) {
             Todo.expandedAddFor = null;
             Todo.render();
           }

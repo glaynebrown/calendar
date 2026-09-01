@@ -494,10 +494,32 @@ const Store = {
       .filter(c => c.a === userId || c.b === userId)
       .map(c => (c.a === userId ? c.b : c.a));
   },
-  // "Known people" = the accounts a given user is allowed to see/act on: themselves + accepted connections.
+  // ---- per-account custom order for known people (participant pickers,
+  // views' default peopleIds, etc.) -- same reasoning as category order:
+  // purely a personal display preference, so Jo can put herself first and
+  // you can keep yourself and Nick first, independent of each other. New
+  // connections nobody's placed yet just land at the end until dragged. ----
+  getPersonOrder(userId) {
+    const synced = this._pref('personOrder');
+    if (synced !== undefined) return synced;
+    return readJSON(`fc_personOrder_${userId}`, []);
+  },
+  setPersonOrder(userId, orderedIds) {
+    writeJSON(`fc_personOrder_${userId}`, orderedIds);
+    this._syncPref(userId, 'personOrder', orderedIds);
+  },
+  // "Known people" = the accounts a given user is allowed to see/act on:
+  // themselves (always first) + accepted connections, in this user's own
+  // custom order (see getPersonOrder/setPersonOrder above).
   getKnownPeople(userId) {
     const me = this.getAccount(userId);
-    const connected = this.getConnectedIds(userId).map(id => this.getAccount(id)).filter(Boolean);
+    const connectedAccounts = this.getConnectedIds(userId).map(id => this.getAccount(id)).filter(Boolean);
+    const order = this.getPersonOrder(userId);
+    const byId = new Map(connectedAccounts.map(p => [p.id, p]));
+    const placed = order.map(id => byId.get(id)).filter(Boolean);
+    const placedSet = new Set(placed.map(p => p.id));
+    const rest = connectedAccounts.filter(p => !placedSet.has(p.id));
+    const connected = [...placed, ...rest];
     return me ? [me, ...connected] : connected;
   },
 

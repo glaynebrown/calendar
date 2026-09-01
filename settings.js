@@ -351,6 +351,13 @@ const Settings = {
       </div>
 
       <div class="settings-section">
+        <h3>People order</h3>
+        <p class="muted" style="margin-top:-4px;">Drag to set the order people appear in everywhere you pick from your household/connections -- like the Participants list when adding an event. This is just your own preference; everyone else can set their own order independently. You always appear first.</p>
+        <div id="st-people-order-list"></div>
+        ${knownPeople.length === 0 ? '<p class="muted">Nobody to reorder yet.</p>' : ''}
+      </div>
+
+      <div class="settings-section">
         <h3>Calendar</h3>
         <label class="switch-row" id="st-viewmode-row">
           <span>View Menu: use checkboxes instead of named views</span>
@@ -613,6 +620,39 @@ const Settings = {
         });
       }
       renderConnections();
+
+      // Flat list of everyone known (household + plain connections alike),
+      // in this user's own custom order (see Store.getPersonOrder) -- feeds
+      // Store.getKnownPeople everywhere it's used, including the event
+      // editor's Participants picker. Deliberately separate from the
+      // Household/Connections lists above: those manage WHO you know,
+      // this only manages the ORDER, which is why household members show
+      // up here too even though they're excluded from the plain
+      // Connections list.
+      function renderPeopleOrder() {
+        const listEl = root.querySelector('#st-people-order-list');
+        if (!listEl) return;
+        listEl.innerHTML = '';
+        Store.getKnownPeople(userId).filter(p => p.id !== userId).forEach(p => {
+          const row = document.createElement('div');
+          row.className = 'color-swatch-row sortable-item';
+          row.dataset.id = p.id;
+          const viewColor = Store.colorFor(userId, p.id);
+          row.innerHTML = `
+            <button type="button" class="drag-handle" aria-label="Reorder ${escapeAttr(p.name)}">${icon('grip')}</button>
+            <div class="color-swatch-row-left">
+              <span class="avatar-mini" style="background:${viewColor};">${initials(p.name)}</span>
+              <span>${escapeHTML(p.name)}</span>
+            </div>
+          `;
+          listEl.appendChild(row);
+        });
+      }
+      renderPeopleOrder();
+      makeSortable(root.querySelector('#st-people-order-list'), orderedIds => {
+        Store.setPersonOrder(userId, orderedIds);
+        renderPeopleOrder();
+      });
 
       let currentInviteCode = null;
       Store.getOrCreateInvite('individual_connect', userId).then(code => { currentInviteCode = code; });

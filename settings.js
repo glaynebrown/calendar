@@ -640,7 +640,7 @@ const Settings = {
           const viewColor = Store.colorFor(userId, p.id);
           row.innerHTML = `
             <button type="button" class="drag-handle" aria-label="Reorder ${escapeAttr(p.name)}">${icon('grip')}</button>
-            <div class="color-swatch-row-left">
+            <div class="color-swatch-row-left" style="flex:1;">
               <span class="avatar-mini" style="background:${viewColor};">${initials(p.name)}</span>
               <span>${escapeHTML(p.name)}</span>
             </div>

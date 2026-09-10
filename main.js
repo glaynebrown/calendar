@@ -140,6 +140,7 @@ const App = {
     // is responsible for creating, so it has to run strictly after.
     Store.migrateLocalPreferencesIfNeeded(user.uid).then(() => Store.migrateMonthThemesIfNeeded(user.uid));
     Store.migrateLocalBirthdaysIfNeeded(user.uid);
+    Store.claimLegacyCategoriesIfNeeded(user.uid);
     Store.onDataChange(() => {
       // Re-applies the theme on every cache update, not just ones that
       // actually touched it -- cheap (just sets a few CSS vars/classes) and

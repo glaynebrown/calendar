@@ -138,6 +138,16 @@ function computeBirthdayVisibleTo(ownerId, shared) {
   return Array.from(ids);
 }
 
+// Same denormalized-visibleTo shape again, but for a category: deliberately
+// NOT household-wide like birthdays -- see the design discussion. Everyone
+// currently shares one household, but each person's categories should only
+// reach the specific people they pick (you share with Nick, Jo shares with
+// Jason, your sister shares with no one), so this is just the owner plus an
+// explicit list, same pattern as a note's sharedWith.
+function computeCategoryVisibleTo(ownerId, sharedWith) {
+  return Array.from(new Set([ownerId, ...(sharedWith || [])]));
+}
+
 const Store = {
   // ---- sync lifecycle: call startSync(uid) after Firebase Auth signs
   // someone in, before rendering the app. Returns a promise that resolves
@@ -183,10 +193,20 @@ const Store = {
       settle('events'); notify();
     }));
 
-    _unsubscribers.push(db.collection('categories').onSnapshot(snap => {
-      _cache.categories = snap.docs.map(d => d.id);
-      settle('categories'); notify();
-    }));
+    // categoryDefs, not the old plain `categories` collection -- see
+    // claimLegacyCategoriesIfNeeded and firestore.rules for why the old
+    // flat list is a fully separate collection now rather than just an
+    // unowned shape within this one.
+    _unsubscribers.push(db.collection('categoryDefs').where('visibleTo', 'array-contains', userId).onSnapshot(
+      snap => {
+        _cache.categories = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        settle('categories'); notify();
+      },
+      err => {
+        console.warn('Categories sync failed:', err.code);
+        settle('categories'); notify();
+      }
+    ));
 
     _unsubscribers.push(db.collection('views').doc(userId).collection('customViews').onSnapshot(snap => {
       _cache.views = snap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -728,102 +748,116 @@ const Store = {
       });
   },
 
-  // ---- categories (simple flat shared list, derived + custom) ----
-  // The list itself is shared (everyone sees the same category names), but
-  // what order you see them in is your own preference, same as colors --
-  // reordering yours doesn't rearrange anyone else's. New categories nobody
-  // has manually placed yet, or ones another person just added, just land
-  // at the end until you drag them somewhere.
+  // ---- categories -- owned by whoever creates them, visible only to the
+  // owner plus whoever they've explicitly shared it with (see
+  // computeCategoryVisibleTo), same denormalized-visibleTo shape as
+  // events/notes/birthdays. This replaced a single flat list every signed-in
+  // user could see and tag events with, which stopped making sense once
+  // multiple unrelated people (not just one household's worth) were on the
+  // same app -- your "Kids"/"Work" categories aren't useful clutter in Jo's
+  // picker, and she may not want you seeing hers either. Identified by a
+  // real id, not by name, specifically so two different people can each
+  // have their own category that happens to be named the same thing
+  // without colliding into a single shared record (a real risk once
+  // ownership is per-person -- name was fine as an id only when there was
+  // exactly one shared list). See claimLegacyCategoriesIfNeeded for how
+  // the old flat list became owned records.
+  getCategories() {
+    const userId = this.getCurrentUserId();
+    const order = this.getCategoryOrder(userId);
+    const known = _cache.categories;
+    const byId = new Map(known.map(c => [c.id, c]));
+    const placed = order.map(id => byId.get(id)).filter(Boolean);
+    const placedSet = new Set(placed.map(c => c.id));
+    const rest = known.filter(c => !placedSet.has(c.id));
+    return [...placed, ...rest];
+  },
+  getCategoryById(id) {
+    return _cache.categories.find(c => c.id === id) || null;
+  },
+  // Categories you own vs. ones only shared with you can't be told apart
+  // just from getCategories() -- the Manage Categories screen needs the
+  // split (yours: rename/delete/re-share; shared-with-you: read-only name,
+  // but still your own color, same as a shared birthday).
+  getOwnedCategories(userId) {
+    return this.getCategories().filter(c => c.ownerId === userId);
+  },
+  getSharedCategories(userId) {
+    return this.getCategories().filter(c => c.ownerId !== userId);
+  },
+  addCategory(userId, name, sharedWith = []) {
+    const id = uid();
+    const full = { id, name, ownerId: userId, sharedWith, visibleTo: computeCategoryVisibleTo(userId, sharedWith) };
+    _cache.categories.push(full);
+    firebase.firestore().collection('categoryDefs').doc(id).set(full);
+    return id;
+  },
+  renameCategory(userId, id, newName) {
+    newName = newName.trim();
+    const idx = _cache.categories.findIndex(c => c.id === id);
+    if (!newName || idx < 0) return;
+    _cache.categories[idx] = { ..._cache.categories[idx], name: newName };
+    firebase.firestore().collection('categoryDefs').doc(id).update({ name: newName });
+  },
+  // Who a category is shared with is the one thing that can change after
+  // creation besides its name/color -- kept as its own method (rather than
+  // folded into a generic update) so the visibleTo recompute always
+  // happens alongside it; forgetting that would leave someone able to
+  // still query for events tagged with a category their access to was
+  // just revoked, or unable to see one they were just granted.
+  setCategorySharing(userId, id, sharedWith) {
+    const idx = _cache.categories.findIndex(c => c.id === id);
+    if (idx < 0) return;
+    const visibleTo = computeCategoryVisibleTo(userId, sharedWith);
+    _cache.categories[idx] = { ..._cache.categories[idx], sharedWith, visibleTo };
+    firebase.firestore().collection('categoryDefs').doc(id).update({ sharedWith, visibleTo });
+  },
+  // Un-tags any events using this category (doesn't delete the events).
+  // Only ever reaches the events THIS user can see -- an event tagged with
+  // this category by someone it was never shared with (impossible under
+  // the new model, but could still exist from before this shipped) is out
+  // of reach here the same way it's out of reach for everything else.
+  deleteCategory(userId, id) {
+    const db = firebase.firestore();
+    _cache.categories = _cache.categories.filter(c => c.id !== id);
+    db.collection('categoryDefs').doc(id).delete();
+    _cache.events.forEach(e => {
+      if (e.category === id) {
+        e.category = null;
+        db.collection('events').doc(e.id).update({ category: null });
+      }
+    });
+    this.clearCategoryColor(userId, id);
+  },
+
+  // ---- per-account order/color for categories, keyed by category id (not
+  // name, for the same collision reason categories themselves moved to
+  // ids) -- purely a personal display preference, same as person order. ----
   getCategoryOrder(userId) {
     const synced = this._pref('categoryOrder');
     if (synced !== undefined) return synced;
     return readJSON(`fc_catOrder_${userId}`, []);
   },
-  setCategoryOrder(userId, orderedNames) {
-    writeJSON(`fc_catOrder_${userId}`, orderedNames);
-    this._syncPref(userId, 'categoryOrder', orderedNames);
+  setCategoryOrder(userId, orderedIds) {
+    writeJSON(`fc_catOrder_${userId}`, orderedIds);
+    this._syncPref(userId, 'categoryOrder', orderedIds);
   },
-  getCategories() {
-    const order = this.getCategoryOrder(this.getCurrentUserId());
-    const known = new Set(_cache.categories);
-    const placed = order.filter(c => known.has(c));
-    const placedSet = new Set(placed);
-    const rest = _cache.categories.filter(c => !placedSet.has(c));
-    return [...placed, ...rest];
-  },
-  addCategory(name) {
-    if (_cache.categories.includes(name)) return;
-    _cache.categories.push(name);
-    firebase.firestore().collection('categories').doc(name).set({});
-  },
-  // Renames a category everywhere it's referenced: the shared category list,
-  // and every event tagged with it. (Per-user category colors and saved
-  // views stay local/private, so a rename can leave a stale reference in
-  // someone else's own view filter or color map -- harmless, since a
-  // category name that no longer exists just matches nothing.)
-  renameCategory(oldName, newName) {
-    newName = newName.trim();
-    if (!newName || newName === oldName) return;
-    const db = firebase.firestore();
-    _cache.categories = Array.from(new Set(_cache.categories.map(c => c === oldName ? newName : c)));
-    db.collection('categories').doc(oldName).delete();
-    db.collection('categories').doc(newName).set({});
-
-    _cache.events.forEach(e => {
-      if (e.category === oldName) {
-        e.category = newName;
-        db.collection('events').doc(e.id).update({ category: newName });
-      }
-    });
-
-    const colorMap = this.getCategoryColorMap(Store.getCurrentUserId());
-    if (colorMap[oldName]) {
-      const next = { ...colorMap, [newName]: colorMap[oldName] };
-      delete next[oldName];
-      writeJSON(`fc_catcolors_${Store.getCurrentUserId()}`, next);
-      this._syncPref(Store.getCurrentUserId(), 'categoryColors', next);
-    }
-  },
-  // Un-tags any events using this category (doesn't delete the events).
-  deleteCategory(name) {
-    const db = firebase.firestore();
-    _cache.categories = _cache.categories.filter(c => c !== name);
-    db.collection('categories').doc(name).delete();
-
-    _cache.events.forEach(e => {
-      if (e.category === name) {
-        e.category = null;
-        db.collection('events').doc(e.id).update({ category: null });
-      }
-    });
-
-    const colorMap = this.getCategoryColorMap(Store.getCurrentUserId());
-    if (colorMap[name]) {
-      const next = { ...colorMap };
-      delete next[name];
-      writeJSON(`fc_catcolors_${Store.getCurrentUserId()}`, next);
-      this._syncPref(Store.getCurrentUserId(), 'categoryColors', next);
-    }
-  },
-
-  // ---- per-account category color map (like colorFor, but keyed by
-  // category name) -- see the `preferences` note above. ----
   getCategoryColorMap(userId) {
     const synced = this._pref('categoryColors');
     if (synced !== undefined) return synced;
     return readJSON(`fc_catcolors_${userId}`, {});
   },
-  setCategoryColor(userId, category, color) {
-    const next = { ...this.getCategoryColorMap(userId), [category]: color };
+  setCategoryColor(userId, categoryId, color) {
+    const next = { ...this.getCategoryColorMap(userId), [categoryId]: color };
     writeJSON(`fc_catcolors_${userId}`, next);
     this._syncPref(userId, 'categoryColors', next);
   },
   // Explicitly un-sets a category's color, back to "no color of its own" --
   // distinct from setCategoryColor(..., null), which would still work the
   // same way, but this reads clearer at call sites that mean "clear it".
-  clearCategoryColor(userId, category) {
+  clearCategoryColor(userId, categoryId) {
     const next = { ...this.getCategoryColorMap(userId) };
-    delete next[category];
+    delete next[categoryId];
     writeJSON(`fc_catcolors_${userId}`, next);
     this._syncPref(userId, 'categoryColors', next);
   },
@@ -836,8 +870,8 @@ const Store = {
   // telling whose is whose at a glance. Returning null here for an
   // unset category lets colorForEvent fall back to the owner's own color
   // instead, while the category itself still works fine as a filter.
-  categoryColorFor(userId, category) {
-    return this.getCategoryColorMap(userId)[category] || null;
+  categoryColorFor(userId, categoryId) {
+    return this.getCategoryColorMap(userId)[categoryId] || null;
   },
 
   // ---- per-user views (private -- only ever read/written for the current
@@ -1358,6 +1392,47 @@ const Store = {
       }));
     } catch (err) {
       console.warn('Birthday migration failed, will retry next sign-in:', err.code);
+    }
+  },
+
+  // One-time, and deliberately specific to this one account (hardcoded
+  // uid, not a generic per-user migration like the others above) -- the old
+  // flat category list had no concept of an owner at all, so there's no
+  // data-driven way to decide "whose category was this" the way the other
+  // migrations infer things from each device's own local storage. Per the
+  // design discussion, every pre-existing category becomes owned by this
+  // account specifically, shared by default with the other account this
+  // household was built around (Nick) so nothing already in use visibly
+  // breaks for him -- anyone else who wants a pre-existing category shared
+  // with them needs it added explicitly from here on. Safe to call from
+  // any account: it only ever does something when signed in as the one
+  // hardcoded uid, and only once (checks the real legacy docs, not a flag).
+  async claimLegacyCategoriesIfNeeded(userId) {
+    const LEGACY_OWNER = 'sXb8kYl2M4Z3Iw0MEOckwFgGFO63';
+    const DEFAULT_SHARE_WITH = ['I8BGj9OcgbYH92Fs7O8ecAYP3jR2'];
+    if (userId !== LEGACY_OWNER) return;
+    const db = firebase.firestore();
+    try {
+      const snap = await db.collection('categories').get();
+      const legacy = snap.docs.filter(d => !('ownerId' in d.data()));
+      if (!legacy.length) return;
+      const nameToId = {};
+      await Promise.all(legacy.map(d => {
+        const id = uid();
+        nameToId[d.id] = id;
+        const full = { id, name: d.id, ownerId: userId, sharedWith: DEFAULT_SHARE_WITH, visibleTo: computeCategoryVisibleTo(userId, DEFAULT_SHARE_WITH) };
+        _cache.categories.push(full);
+        return db.collection('categoryDefs').doc(id).set(full);
+      }));
+      const eventsToRemap = _cache.events.filter(e => e.ownerId === userId && nameToId[e.category]);
+      await Promise.all(eventsToRemap.map(e => {
+        const newId = nameToId[e.category];
+        e.category = newId;
+        return db.collection('events').doc(e.id).update({ category: newId });
+      }));
+      await Promise.all(legacy.map(d => db.collection('categories').doc(d.id).delete()));
+    } catch (err) {
+      console.warn('Legacy category migration failed, will retry next sign-in:', err.code);
     }
   },
 

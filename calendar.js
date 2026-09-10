@@ -579,7 +579,10 @@ const Calendar = {
       const input = addRow.querySelector('#vm-new-category');
       const name = input.value.trim();
       if (!name) return;
-      Store.addCategory(name);
+      // Private to whoever adds it (sharedWith defaults to none) -- shared
+      // with specific people from Manage Categories afterward, same as a
+      // new note starts unshared until you explicitly pick who sees it.
+      Store.addCategory(Store.getCurrentUserId(), name);
       input.value = '';
       addRow.classList.add('hidden');
       Calendar.renderViewMenu();
@@ -647,21 +650,21 @@ const Calendar = {
       row.className = 'menu-item-row';
 
       const btn = document.createElement('button');
-      btn.className = 'menu-item' + (activeCategory === cat ? ' selected' : '');
-      const dotColor = Store.categoryColorFor(userId, cat);
-      btn.innerHTML = `<span class="menu-item-inner"><span class="cat-dot" style="${this.catDotStyle(dotColor)}"></span>${escapeAttr(cat)}</span>`;
-      btn.addEventListener('click', () => { Store.setCategoryFilter(userId, cat); menu.classList.add('hidden'); this.render(); });
+      btn.className = 'menu-item' + (activeCategory === cat.id ? ' selected' : '');
+      const dotColor = Store.categoryColorFor(userId, cat.id);
+      btn.innerHTML = `<span class="menu-item-inner"><span class="cat-dot" style="${this.catDotStyle(dotColor)}"></span>${escapeAttr(cat.name)}</span>`;
+      btn.addEventListener('click', () => { Store.setCategoryFilter(userId, cat.id); menu.classList.add('hidden'); this.render(); });
 
       const editBtn = document.createElement('button');
       editBtn.type = 'button';
       editBtn.className = 'icon-btn';
-      editBtn.setAttribute('aria-label', `Edit ${cat}`);
+      editBtn.setAttribute('aria-label', `Edit ${cat.name}`);
       editBtn.innerHTML = icon('pencil');
       editBtn.querySelector('svg').style.cssText = 'width:14px;height:14px;';
       editBtn.addEventListener('click', e => {
         e.stopPropagation();
         menu.classList.add('hidden');
-        this.openEditCategoryModal(cat);
+        this.openEditCategoryModal(cat.id);
       });
 
       row.appendChild(btn);
@@ -710,18 +713,18 @@ const Calendar = {
 
       const label = document.createElement('label');
       label.className = 'menu-item checklist-item';
-      const checked = filter.categories.length === 0 || filter.categories.includes(cat);
-      const dotColor = Store.categoryColorFor(userId, cat);
-      label.innerHTML = `<input type="checkbox" ${checked ? 'checked' : ''}><span class="menu-item-inner"><span class="cat-dot" style="${this.catDotStyle(dotColor)}"></span>${escapeAttr(cat)}</span>`;
+      const checked = filter.categories.length === 0 || filter.categories.includes(cat.id);
+      const dotColor = Store.categoryColorFor(userId, cat.id);
+      label.innerHTML = `<input type="checkbox" ${checked ? 'checked' : ''}><span class="menu-item-inner"><span class="cat-dot" style="${this.catDotStyle(dotColor)}"></span>${escapeAttr(cat.name)}</span>`;
       label.querySelector('input').addEventListener('change', e => {
         const current = Store.getChecklistFilter(userId);
-        const allCats = Store.getCategories();
-        const base = current.categories.length === 0 ? allCats : current.categories;
+        const allCatIds = Store.getCategories().map(c => c.id);
+        const base = current.categories.length === 0 ? allCatIds : current.categories;
         // categories:[] means "all" app-wide, so the last checked box can't be unchecked
         // (that would collapse to [] and flip the meaning back to "all" instead of "none").
         if (!e.target.checked && base.length === 1) { e.target.checked = true; return; }
-        let next = e.target.checked ? Array.from(new Set([...base, cat])) : base.filter(c => c !== cat);
-        if (next.length === allCats.length) next = [];
+        let next = e.target.checked ? Array.from(new Set([...base, cat.id])) : base.filter(id => id !== cat.id);
+        if (next.length === allCatIds.length) next = [];
         Store.setChecklistFilter(userId, { ...current, categories: next });
         Calendar.render();
       });
@@ -729,13 +732,13 @@ const Calendar = {
       const editBtn = document.createElement('button');
       editBtn.type = 'button';
       editBtn.className = 'icon-btn';
-      editBtn.setAttribute('aria-label', `Edit ${cat}`);
+      editBtn.setAttribute('aria-label', `Edit ${cat.name}`);
       editBtn.innerHTML = icon('pencil');
       editBtn.querySelector('svg').style.cssText = 'width:14px;height:14px;';
       editBtn.addEventListener('click', e => {
         e.stopPropagation();
         menu.classList.add('hidden');
-        this.openEditCategoryModal(cat);
+        this.openEditCategoryModal(cat.id);
       });
 
       row.appendChild(label);
@@ -761,35 +764,38 @@ const Calendar = {
       root.querySelector('#mc-close').addEventListener('click', closeModal);
       const listEl = root.querySelector('#mc-list');
 
+      // One combined, reorderable list -- owned categories AND ones shared
+      // with you sit in the same order together (same shape as the People
+      // order list), but only owned rows get a delete button; tapping any
+      // row opens the full editor (name/color/sharing for yours, just
+      // color for someone else's), rather than renaming inline here.
       function renderList() {
         const cats = Store.getCategories();
         listEl.innerHTML = cats.length ? '' : '<p class="muted">No categories yet.</p>';
         cats.forEach(cat => {
+          const isOwner = cat.ownerId === userId;
           const row = document.createElement('div');
           row.className = 'color-swatch-row sortable-item';
-          row.dataset.id = cat;
+          row.dataset.id = cat.id;
+          const dotColor = Store.categoryColorFor(userId, cat.id);
           row.innerHTML = `
-            <button type="button" class="drag-handle" aria-label="Reorder ${escapeAttr(cat)}">${icon('grip')}</button>
-            <input type="text" value="${escapeAttr(cat)}" style="flex:1; margin-right:8px; padding:7px 8px; border-radius:8px; border:0.5px solid var(--border-strong); background:var(--surface-2); color:var(--text);">
-            <button type="button" class="btn btn-danger" style="padding:4px 10px;">Delete</button>
+            <button type="button" class="drag-handle" aria-label="Reorder ${escapeAttr(cat.name)}">${icon('grip')}</button>
+            <button type="button" class="menu-item" style="flex:1;">
+              <span class="menu-item-inner">
+                <span class="cat-dot" style="${Calendar.catDotStyle(dotColor)}"></span>
+                <span>${escapeHTML(cat.name)}</span>
+              </span>
+              ${isOwner ? '' : '<span class="muted">(shared with you)</span>'}
+            </button>
+            ${isOwner ? `<button type="button" class="btn btn-danger" style="padding:4px 10px;">Delete</button>` : ''}
           `;
-          const input = row.querySelector('input');
+          row.querySelector('.menu-item').addEventListener('click', () => {
+            closeModal();
+            Calendar.openEditCategoryModal(cat.id);
+          });
           const deleteBtn = row.querySelector('.btn-danger');
-          input.addEventListener('blur', () => {
-            const newName = input.value.trim();
-            if (newName && newName !== cat) {
-              Store.renameCategory(cat, newName);
-              renderList();
-              Calendar.render();
-            } else {
-              input.value = cat;
-            }
-          });
-          input.addEventListener('keydown', e => {
-            if (e.key === 'Enter') input.blur();
-          });
-          deleteBtn.addEventListener('click', () => {
-            Store.deleteCategory(cat);
+          if (deleteBtn) deleteBtn.addEventListener('click', () => {
+            Store.deleteCategory(userId, cat.id);
             renderList();
             Calendar.render();
           });
@@ -797,8 +803,8 @@ const Calendar = {
         });
       }
       renderList();
-      makeSortable(listEl, orderedNames => {
-        Store.setCategoryOrder(userId, orderedNames);
+      makeSortable(listEl, orderedIds => {
+        Store.setCategoryOrder(userId, orderedIds);
         renderList();
         Calendar.render();
       });
@@ -807,26 +813,38 @@ const Calendar = {
         const nameInput = root.querySelector('#mc-new-name');
         const name = nameInput.value.trim();
         if (!name) return;
-        Store.addCategory(name);
+        // Private by default (no one shared yet) -- share it with specific
+        // people from its own edit screen afterward.
+        Store.addCategory(userId, name);
         nameInput.value = '';
         renderList();
       });
     });
   },
 
-  openEditCategoryModal(cat) {
+  // catId: a category's real id (see store.js's category-ownership
+  // comment for why it's an id now, not the name itself). Name/sharing/
+  // delete are owner-only -- your own color is always yours to set
+  // regardless of who owns it, same principle as a shared birthday.
+  openEditCategoryModal(catId) {
     const userId = Store.getCurrentUserId();
-    const initialColor = Store.categoryColorFor(userId, cat);
+    const category = Store.getCategoryById(catId);
+    if (!category) return;
+    const isOwner = category.ownerId === userId;
+    const initialColor = Store.categoryColorFor(userId, catId);
+    const otherPeople = Store.getKnownPeople(userId).filter(p => p.id !== userId);
 
     const body = `
       <div class="modal-header"><h2>Edit category</h2><button class="modal-close" id="ec-close">${icon('x')}</button></div>
       <div class="field">
         <label>Name</label>
-        <input type="text" id="ec-name" value="${escapeAttr(cat)}">
+        ${isOwner
+          ? `<input type="text" id="ec-name" value="${escapeAttr(category.name)}">`
+          : `<p style="margin:0;">${escapeHTML(category.name)} <span class="muted">(shared with you${(() => { const o = Store.getAccount(category.ownerId); return o ? ' by ' + escapeHTML(o.name) : ''; })()})</span></p>`}
       </div>
       <div class="field">
         <label>Color</label>
-        <p class="muted" style="margin-top:-2px;">Optional -- leave unset and events in this category keep showing in each person's own color instead, so you can still filter by category without losing track of whose is whose.</p>
+        <p class="muted" style="margin-top:-2px;">Optional -- leave unset and events in this category keep showing in each person's own color instead, so you can still filter by category without losing track of whose is whose. This is always just your own -- it doesn't change what anyone else sees.</p>
         <div style="display:flex; gap:6px;">
           <span class="color-field-wrap">
             <button type="button" class="time-field-btn${initialColor ? '' : ' placeholder'}" id="ec-color-btn" style="width:100%;">
@@ -838,8 +856,16 @@ const Calendar = {
           <button type="button" class="icon-btn${initialColor ? '' : ' hidden'}" id="ec-color-clear" aria-label="Remove category color">${icon('x')}</button>
         </div>
       </div>
+      ${isOwner ? `
+      <div class="field">
+        <button type="button" class="link-btn" id="ec-share-toggle">Share with specific people</button>
+        <div id="ec-people-picker" class="people-picker${(category.sharedWith || []).length ? '' : ' hidden'}">
+          ${otherPeople.map(p => `<label><input type="checkbox" value="${p.id}" ${(category.sharedWith || []).includes(p.id) ? 'checked' : ''}> ${escapeHTML(p.name)}</label>`).join('')}
+        </div>
+      </div>
+      ` : ''}
       <div class="btn-row">
-        <button class="btn btn-danger" id="ec-delete">Delete category</button>
+        ${isOwner ? `<button class="btn btn-danger" id="ec-delete">Delete category</button>` : ''}
         <button class="btn btn-primary" id="ec-save">Save</button>
       </div>
     `;
@@ -868,18 +894,26 @@ const Calendar = {
         refreshColorBtn();
       });
 
+      const shareToggle = root.querySelector('#ec-share-toggle');
+      const peoplePicker = root.querySelector('#ec-people-picker');
+      if (shareToggle) shareToggle.addEventListener('click', () => peoplePicker.classList.toggle('hidden'));
+
       root.querySelector('#ec-save').addEventListener('click', () => {
-        const newName = root.querySelector('#ec-name').value.trim();
-        const finalName = newName || cat;
-        if (newName && newName !== cat) Store.renameCategory(cat, newName);
-        if (colorVal) Store.setCategoryColor(userId, finalName, colorVal);
-        else Store.clearCategoryColor(userId, finalName);
+        if (isOwner) {
+          const newName = root.querySelector('#ec-name').value.trim();
+          if (newName && newName !== category.name) Store.renameCategory(userId, catId, newName);
+          const sharedWith = Array.from(peoplePicker.querySelectorAll('input:checked')).map(i => i.value);
+          Store.setCategorySharing(userId, catId, sharedWith);
+        }
+        if (colorVal) Store.setCategoryColor(userId, catId, colorVal);
+        else Store.clearCategoryColor(userId, catId);
         closeModal();
         Calendar.render();
       });
 
-      root.querySelector('#ec-delete').addEventListener('click', () => {
-        Store.deleteCategory(cat);
+      const deleteBtn = root.querySelector('#ec-delete');
+      if (deleteBtn) deleteBtn.addEventListener('click', () => {
+        Store.deleteCategory(userId, catId);
         closeModal();
         Calendar.render();
       });
@@ -915,7 +949,7 @@ const Calendar = {
         </div>
         <label class="muted" style="display:block;margin:10px 0 4px;">Categories (leave all unchecked for every category)</label>
         <div class="people-picker" id="mv-categories">
-          ${categories.map(c => `<label><input type="checkbox" value="${escapeAttr(c)}"> ${c}</label>`).join('')}
+          ${categories.map(c => `<label><input type="checkbox" value="${c.id}"> ${escapeHTML(c.name)}</label>`).join('')}
         </div>
         <button class="btn" id="mv-add" style="margin-top:10px;">Add view</button>
       </div>
@@ -3088,10 +3122,16 @@ const Calendar = {
         <div class="detail-row-content">${escapeHTML(participantNames)}</div>
       </div>
     `);
-    if (event.category) rows.push(`
+    // Store.getCategoryById returns null if this viewer has no access to
+    // the category (not the owner, not shared with them) -- the row just
+    // doesn't render at all in that case, same as if there were no
+    // category, rather than leaking the raw name (see the design
+    // discussion on categories moving to per-owner sharing).
+    const eventCategory = event.category ? Store.getCategoryById(event.category) : null;
+    if (eventCategory) rows.push(`
       <div class="detail-row">
         <span class="cat-dot" style="${this.catDotStyle(Store.categoryColorFor(userId, event.category))} margin-top:5px;"></span>
-        <div class="detail-row-content">${escapeHTML(event.category)}</div>
+        <div class="detail-row-content">${escapeHTML(eventCategory.name)}</div>
       </div>
     `);
     if (event.location) rows.push(`
@@ -3171,6 +3211,10 @@ const Calendar = {
     const initialParticipantIds = event ? (event.participantIds || [event.ownerId]) : [userId];
     const initialColorVal = event ? (Store.eventColorFor(userId, event.id) || event.color || null) : null;
     const categories = Store.getCategories();
+    // Resolves to null (shown as "no category") if this viewer doesn't
+    // have access to whatever category the event is actually tagged with
+    // -- see the detail view's identical comment.
+    const initialCategory = event && event.category ? Store.getCategoryById(event.category) : null;
     // Distinct from "event is truthy" -- a birthday/holiday stub carries a
     // pre-filled event object for its first tap, but nothing's actually
     // been saved under its id yet, so this still needs to go through
@@ -3263,12 +3307,12 @@ const Calendar = {
       <div class="field-row">
         <div class="field" id="ev-category-field">
           <label>Category</label>
-          <button type="button" class="time-field-btn${event && event.category ? '' : ' placeholder'}" id="ev-category-btn">
-            ${event && event.category ? `<span class="cat-dot" style="${this.catDotStyle(Store.categoryColorFor(userId, event.category))}"></span>` : ''}
-            <span class="tf-text">${event && event.category ? escapeHTML(event.category) : 'No category'}</span>
+          <button type="button" class="time-field-btn${initialCategory ? '' : ' placeholder'}" id="ev-category-btn">
+            ${initialCategory ? `<span class="cat-dot" style="${this.catDotStyle(Store.categoryColorFor(userId, initialCategory.id))}"></span>` : ''}
+            <span class="tf-text">${initialCategory ? escapeHTML(initialCategory.name) : 'No category'}</span>
           </button>
           <div id="ev-category-menu" class="repeat-menu hidden">
-            ${categories.map(c => `<button type="button" class="menu-item" data-val="${escapeAttr(c)}"><span class="menu-item-inner"><span class="cat-dot" style="${this.catDotStyle(Store.categoryColorFor(userId, c))}"></span>${escapeHTML(c)}</span></button>`).join('')}
+            ${categories.map(c => `<button type="button" class="menu-item" data-val="${c.id}"><span class="menu-item-inner"><span class="cat-dot" style="${this.catDotStyle(Store.categoryColorFor(userId, c.id))}"></span>${escapeHTML(c.name)}</span></button>`).join('')}
             ${categories.length ? '<div class="menu-divider"></div>' : ''}
             <button type="button" class="menu-item" id="ev-category-clear">No category</button>
             <div style="display:flex; gap:6px; padding:6px 10px 4px;">
@@ -3641,13 +3685,20 @@ const Calendar = {
         refreshOwnerBtn();
       }));
 
+      // categoryVal holds a category ID, never a name (see store.js's
+      // ownership comment) -- refreshCategoryBtn resolves it back to a
+      // name/color via Store.getCategoryById, which also naturally
+      // handles "picked something I can no longer resolve" the same way
+      // the detail view does (falls back to "No category" instead of
+      // showing a raw id or throwing).
       let categoryVal = event && event.category ? event.category : null;
       const categoryBtn = root.querySelector('#ev-category-btn');
       const categoryMenu = root.querySelector('#ev-category-menu');
       function refreshCategoryBtn() {
-        const dot = categoryVal ? `<span class="cat-dot" style="${Calendar.catDotStyle(Store.categoryColorFor(userId, categoryVal))}"></span>` : '';
-        categoryBtn.innerHTML = `${dot}<span class="tf-text">${categoryVal ? escapeHTML(categoryVal) : 'No category'}</span>`;
-        categoryBtn.classList.toggle('placeholder', !categoryVal);
+        const cat = categoryVal ? Store.getCategoryById(categoryVal) : null;
+        const dot = cat ? `<span class="cat-dot" style="${Calendar.catDotStyle(Store.categoryColorFor(userId, cat.id))}"></span>` : '';
+        categoryBtn.innerHTML = `${dot}<span class="tf-text">${cat ? escapeHTML(cat.name) : 'No category'}</span>`;
+        categoryBtn.classList.toggle('placeholder', !cat);
       }
       // Category (an organizational tag, used for filtering) and custom
       // color (a personal display preference) are independent -- picking
@@ -3655,8 +3706,8 @@ const Calendar = {
       // custom color over the category's color when both are set, so
       // e.g. a "work" event can be tagged for filtering and still show in
       // whatever color you personally picked for it.
-      function selectCategory(name) {
-        categoryVal = name;
+      function selectCategory(id) {
+        categoryVal = id;
         categoryMenu.classList.add('hidden');
         refreshCategoryBtn();
       }
@@ -3669,9 +3720,11 @@ const Calendar = {
         const input = categoryMenu.querySelector('#ev-category-new');
         const name = input.value.trim();
         if (!name) return;
-        Store.addCategory(name);
+        // Private to whoever adds it, same as the quick-add in the
+        // hamburger menu -- share it from Manage Categories afterward.
+        const id = Store.addCategory(userId, name);
         input.value = '';
-        selectCategory(name);
+        selectCategory(id);
       }
       categoryMenu.querySelector('#ev-category-new-add').addEventListener('click', commitNewCategory);
       categoryMenu.querySelector('#ev-category-new').addEventListener('keydown', e => {
@@ -3851,8 +3904,10 @@ const Calendar = {
         // owner from the participant selection -- there's no prior owner to
         // preserve yet.
         const ownerId = isEdit ? event.ownerId : participantIds[0];
+        // categoryVal is already a real category id, created (if new) back
+        // when it was picked in the menu above -- no need to re-create/
+        // ensure it exists here the way the old name-keyed system did.
         const category = categoryVal;
-        if (category) Store.addCategory(category);
 
         const visibility = privateCb.checked ? 'private' : 'shared';
         const customPeople = [];

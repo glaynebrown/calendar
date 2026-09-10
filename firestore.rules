@@ -132,9 +132,30 @@ service cloud.firestore {
       );
     }
 
-    // Small shared list, low stakes -- any signed-in user can add/remove.
+    // The ORIGINAL flat, shared-by-everyone category list -- superseded by
+    // categoryDefs below, but the rule stays exactly as simple and
+    // permissive as it always was (never made visibleTo-aware) so
+    // store.js's claimLegacyCategoriesIfNeeded can always read and delete
+    // whatever's left of it with one plain unfiltered query, regardless of
+    // how much of categoryDefs has already been populated. Mixing that
+    // logic into one rules-aware collection would mean an unfiltered read
+    // is no longer provable the moment even one doc anywhere has an owner
+    // (Firestore rejects a query rules can't prove safe from its shape
+    // alone) -- kept fully separate specifically to sidestep that.
     match /categories/{name} {
       allow read, write: if isSignedIn();
+    }
+
+    // Categories, replacing the flat list above: owned by whoever creates
+    // them, visible only to the owner plus whoever they've explicitly
+    // shared it with (see store.js's computeCategoryVisibleTo) -- not a
+    // household-wide thing, since one household here spans several
+    // genuinely separate people/couples who each want their own
+    // categories private from each other by default.
+    match /categoryDefs/{id} {
+      allow read: if isSignedIn() && request.auth.uid in resource.data.visibleTo;
+      allow create: if isSignedIn() && request.auth.uid == request.resource.data.ownerId;
+      allow update, delete: if isSignedIn() && request.auth.uid == resource.data.ownerId;
     }
 
     // Private per-user saved view filters -- never read by anyone else.

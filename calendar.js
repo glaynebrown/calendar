@@ -964,8 +964,12 @@ const Calendar = {
         listEl.innerHTML = views.length ? '' : '<p class="muted">No custom views yet.</p>';
         views.forEach(v => {
           const row = document.createElement('div');
-          row.className = 'color-swatch-row';
-          row.innerHTML = `<span>${v.name}</span>`;
+          row.className = 'color-swatch-row sortable-item';
+          row.dataset.id = v.id;
+          row.innerHTML = `
+            <button type="button" class="drag-handle" aria-label="Reorder ${escapeAttr(v.name)}">${icon('grip')}</button>
+            <span style="flex:1;">${escapeHTML(v.name)}</span>
+          `;
           const del = document.createElement('button');
           del.className = 'btn btn-danger';
           del.style.padding = '4px 10px';
@@ -980,6 +984,10 @@ const Calendar = {
         });
       }
       renderList();
+      makeSortable(listEl, orderedIds => {
+        Store.setViewOrder(userId, orderedIds);
+        Calendar.render();
+      });
 
       root.querySelector('#mv-add').addEventListener('click', () => {
         const name = root.querySelector('#mv-name').value.trim();

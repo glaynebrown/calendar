@@ -881,7 +881,27 @@ const Store = {
       { id: '__everyone', name: 'Everyone', peopleIds: this.getKnownPeople(userId).map(p => p.id), categories: [], builtIn: true },
       { id: '__justme', name: 'Just me', peopleIds: [userId], categories: [], builtIn: true },
     ];
-    return builtIn.concat(_cache.views);
+    return builtIn.concat(this.getOrderedCustomViews(userId));
+  },
+  // ---- per-account custom order for your own custom views (built-in
+  // "Everyone"/"Just me" always stay first, same as before) -- purely a
+  // personal display preference, same reasoning as person/category order. ----
+  getViewOrder(userId) {
+    const synced = this._pref('viewOrder');
+    if (synced !== undefined) return synced;
+    return readJSON(`fc_viewOrder_${userId}`, []);
+  },
+  setViewOrder(userId, orderedIds) {
+    writeJSON(`fc_viewOrder_${userId}`, orderedIds);
+    this._syncPref(userId, 'viewOrder', orderedIds);
+  },
+  getOrderedCustomViews(userId) {
+    const order = this.getViewOrder(userId);
+    const byId = new Map(_cache.views.map(v => [v.id, v]));
+    const placed = order.map(id => byId.get(id)).filter(Boolean);
+    const placedSet = new Set(placed.map(v => v.id));
+    const rest = _cache.views.filter(v => !placedSet.has(v.id));
+    return [...placed, ...rest];
   },
   addCustomView(userId, view) {
     const id = uid();

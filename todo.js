@@ -160,6 +160,45 @@ const Todo = {
       const card = document.createElement('div');
       card.className = 'note-card sortable-item' + (note.width === 'half' ? ' width-half' : '');
       card.dataset.id = note.id;
+
+      // Corner-drag resize, same gesture as Planner's widgets -- just
+      // horizontal here, since a note's height already just follows its own
+      // content instead of being user-adjustable. Dragging the handle past
+      // the threshold snaps between half/full with a live class-swap
+      // preview; nothing about a neighboring note needs to change since
+      // side-by-side placement here is plain flex-wrap, not an explicit
+      // pairing relationship like Planner's.
+      const resizeHandle = document.createElement('button');
+      resizeHandle.type = 'button';
+      resizeHandle.className = 'planner-widget-resize-handle note-resize-handle';
+      resizeHandle.setAttribute('aria-label', note.width === 'half' ? 'Drag to make full width' : 'Drag to make half width');
+      resizeHandle.innerHTML = icon('resize-grip');
+      resizeHandle.addEventListener('pointerdown', e => {
+        e.stopPropagation();
+        e.preventDefault();
+        const startX = e.clientX;
+        let previewWidth = note.width === 'half' ? 'half' : 'full';
+        const move = ev => {
+          const dx = ev.clientX - startX;
+          let next = previewWidth;
+          if (dx > 24) next = 'full';
+          else if (dx < -24) next = 'half';
+          if (next !== previewWidth) {
+            previewWidth = next;
+            card.classList.toggle('width-half', previewWidth === 'half');
+          }
+        };
+        const up = () => {
+          document.removeEventListener('pointermove', move);
+          document.removeEventListener('pointerup', up);
+          note.width = previewWidth;
+          Store.updateNote(note.id, { width: previewWidth });
+          resizeHandle.setAttribute('aria-label', previewWidth === 'half' ? 'Drag to make full width' : 'Drag to make half width');
+        };
+        document.addEventListener('pointermove', move);
+        document.addEventListener('pointerup', up);
+      });
+      card.appendChild(resizeHandle);
       const isPhoto = !!note.bgPhoto;
       if (isPhoto) {
         card.style.backgroundImage = `linear-gradient(rgba(20,20,20,0.5), rgba(20,20,20,0.35)), url(${note.bgPhoto})`;
@@ -188,14 +227,9 @@ const Todo = {
           <span class="note-title" style="color:${textColor}">${escapeHTML(note.title || 'Untitled')}</span>
           ${tag}
         </div>
-        <button type="button" class="note-menu-btn note-width-btn" style="color:${textColor};opacity:0.55;" aria-label="${note.width === 'half' ? 'Make full width' : 'Make half width'}">${icon('layout')}</button>
         <button type="button" class="note-menu-btn note-copy-btn" style="color:${textColor};opacity:0.55;" aria-label="Copy list as text">${icon('copy')}</button>
         <button class="note-menu-btn" style="color:${textColor};opacity:0.55;" aria-label="Note options">${icon('dots')}</button>`;
-      header.querySelector('.note-menu-btn:not(.note-copy-btn):not(.note-width-btn)').addEventListener('click', () => Todo.openNoteModal(note));
-      header.querySelector('.note-width-btn').addEventListener('click', () => {
-        Store.updateNote(note.id, { width: note.width === 'half' ? 'full' : 'half' });
-        Todo.render();
-      });
+      header.querySelector('.note-menu-btn:not(.note-copy-btn)').addEventListener('click', () => Todo.openNoteModal(note));
       const copyBtn = header.querySelector('.note-copy-btn');
       copyBtn.addEventListener('click', () => {
         const lines = [note.title || 'Untitled'];

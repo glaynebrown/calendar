@@ -546,7 +546,7 @@ html.text-white .month-label:hover {
 /* To-do */
 .notes-list {
   padding: 12px; margin: 4px 8px 18px; border-radius: 14px; background: var(--surface-2);
-  display: flex; flex-wrap: wrap; align-items: flex-start; gap: 10px; flex: 1;
+  display: flex; flex-wrap: wrap; align-items: flex-start; align-content: flex-start; gap: 10px; flex: 1;
 }
 .note-card {
   border-radius: 14px; padding: 12px 14px; position: relative;
@@ -559,7 +559,11 @@ html.text-white .month-label:hover {
    explicit drag-to-pair system, since a note's neighbor is already whatever
    the list's own order says it is. */
 .note-card.width-half { flex: 1 0 calc(50% - 5px); }
-.note-width-btn svg { width: 15px; height: 15px; }
+/* Same corner-drag width resize as Planner's widgets (see calendar.js's
+   resizeHandle wiring), just horizontal-only -- a note's height already
+   just follows its own content. z-index above .note-card-overlay so it
+   stays reachable even over a full-height photo/checklist/widget body. */
+.note-resize-handle { z-index: 2; cursor: ew-resize; }
 /* Widget-type notes (Mood/Habit/Photo/Mood Board/Drawing) reuse Planner's own
    widget body classes verbatim (.planner-mood-row, .planner-checklist-row,
    .planner-photo-grid, .planner-drawing-body, .planner-moodboard-body) --

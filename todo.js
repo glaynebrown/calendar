@@ -23,14 +23,14 @@ function contrastTextColor(hex) {
 // and rendering a bare Note/To-do List already has.
 const NOTE_OTHER_TYPES = [
   { type: 'bullets', label: 'Bulleted List' },
-  { type: 'mood', label: 'Mood Tracker' },
-  { type: 'habits', label: 'Habit Tracker' },
-  { type: 'photos', label: 'Photo Board' },
-  { type: 'moodboard', label: 'Mood Board' },
   { type: 'drawing', label: 'Drawing/iPad' },
-  { type: 'note', label: 'Memories', placeholder: 'What made today memorable?' },
-  { type: 'note', label: 'Gratitude', placeholder: 'What are you grateful for today?' },
   { type: 'checklist', label: 'Goals' },
+  { type: 'note', label: 'Gratitude', placeholder: 'What are you grateful for today?' },
+  { type: 'habits', label: 'Habit Tracker' },
+  { type: 'note', label: 'Memories', placeholder: 'What made today memorable?' },
+  { type: 'moodboard', label: 'Mood Board' },
+  { type: 'mood', label: 'Mood Tracker' },
+  { type: 'photos', label: 'Photo Board' },
   { type: 'checklist', label: 'Priorities' },
 ];
 const NOTE_TYPE_LABELS = { mood: 'Mood Tracker', habits: 'Habit Tracker', photos: 'Photo Board', moodboard: 'Mood Board', drawing: 'Drawing/iPad', note: 'Note', checklist: 'To-do List', bullets: 'Bulleted List' };

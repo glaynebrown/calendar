@@ -161,13 +161,15 @@ const Todo = {
       card.className = 'note-card sortable-item' + (note.width === 'half' ? ' width-half' : '');
       card.dataset.id = note.id;
 
-      // Corner-drag resize, same gesture as Planner's widgets -- just
-      // horizontal here, since a note's height already just follows its own
-      // content instead of being user-adjustable. Dragging the handle past
-      // the threshold snaps between half/full with a live class-swap
-      // preview; nothing about a neighboring note needs to change since
-      // side-by-side placement here is plain flex-wrap, not an explicit
-      // pairing relationship like Planner's.
+      // Corner-drag resize, same two-axis gesture as Planner's widgets:
+      // vertical sets a fixed height + overflow-y:auto on the content area
+      // (contentBody, created below) so a long checklist/note gets an
+      // actually taller box instead of leaving you stuck scrolling with no
+      // way to see more at once; horizontal snaps between half/full width,
+      // same as before. contentBody is assigned further down, but the
+      // closures here only ever run in response to a later drag, by which
+      // point it's already set.
+      let contentBody;
       const resizeHandle = document.createElement('button');
       resizeHandle.type = 'button';
       resizeHandle.className = 'planner-widget-resize-handle note-resize-handle';
@@ -176,9 +178,15 @@ const Todo = {
       resizeHandle.addEventListener('pointerdown', e => {
         e.stopPropagation();
         e.preventDefault();
-        const startX = e.clientX;
+        const startX = e.clientX, startY = e.clientY;
+        const startHeight = contentBody.getBoundingClientRect().height;
         let previewWidth = note.width === 'half' ? 'half' : 'full';
         const move = ev => {
+          const dy = ev.clientY - startY;
+          const newHeight = Math.max(60, startHeight + dy);
+          contentBody.style.height = `${newHeight}px`;
+          contentBody.style.overflowY = 'auto';
+
           const dx = ev.clientX - startX;
           let next = previewWidth;
           if (dx > 24) next = 'full';
@@ -191,14 +199,15 @@ const Todo = {
         const up = () => {
           document.removeEventListener('pointermove', move);
           document.removeEventListener('pointerup', up);
+          const finalHeight = parseFloat(contentBody.style.height) || null;
           note.width = previewWidth;
-          Store.updateNote(note.id, { width: previewWidth });
+          note.height = finalHeight;
+          Store.updateNote(note.id, { width: previewWidth, height: finalHeight });
           resizeHandle.setAttribute('aria-label', previewWidth === 'half' ? 'Drag to make full width' : 'Drag to make half width');
         };
         document.addEventListener('pointermove', move);
         document.addEventListener('pointerup', up);
       });
-      card.appendChild(resizeHandle);
       const isPhoto = !!note.bgPhoto;
       if (isPhoto) {
         card.style.backgroundImage = `linear-gradient(rgba(20,20,20,0.5), rgba(20,20,20,0.35)), url(${note.bgPhoto})`;
@@ -209,6 +218,9 @@ const Todo = {
       // manual pick -- see openNoteModal), photo backgrounds included, so
       // this fallback only ever matters for notes saved before this existed.
       const textColor = note.textColor || (isPhoto ? '#ffffff' : NOTE_PALETTE[0].text);
+      resizeHandle.style.color = textColor;
+      resizeHandle.style.opacity = '0.55';
+      card.appendChild(resizeHandle);
 
       const inner = document.createElement('div');
       inner.className = 'note-card-overlay';
@@ -246,16 +258,32 @@ const Todo = {
       });
       inner.appendChild(header);
 
+      // Everything below the header lives in here -- the resize handle's
+      // vertical drag (see below) sets a fixed height + overflow-y:auto on
+      // this one element, same as Planner's own widget body, so dragging
+      // taller actually gives a note more room instead of leaving you stuck
+      // scrolling its content with no way to see more at once.
+      contentBody = document.createElement('div');
+      contentBody.className = 'note-content-body';
+      if (note.height) { contentBody.style.height = `${note.height}px`; contentBody.style.overflowY = 'auto'; }
+      inner.appendChild(contentBody);
+
       if (note.type === 'note') {
         const textarea = document.createElement('textarea');
         textarea.className = 'note-text-area';
         textarea.placeholder = note.placeholder || 'Write something...';
         textarea.value = note.text || '';
         textarea.style.color = textColor;
+        // Unconditional, not just when note.height is already set -- a
+        // percentage height only ever resolves once contentBody actually
+        // has a definite pixel height (i.e. after a resize drag), so this
+        // is a no-op until then and takes effect the moment one happens,
+        // without needing a re-render to pick it up.
+        textarea.style.height = '100%';
         textarea.addEventListener('change', () => {
           Store.updateNote(note.id, { text: textarea.value });
         });
-        inner.appendChild(textarea);
+        contentBody.appendChild(textarea);
         card.appendChild(inner);
         list.appendChild(card);
         return;
@@ -265,12 +293,13 @@ const Todo = {
         const widgetBody = document.createElement('div');
         widgetBody.className = 'note-widget-body';
         widgetBody.style.color = textColor;
+        widgetBody.style.height = '100%'; // same no-op-until-resized reasoning as the note textarea above
         if (note.type === 'mood') Calendar.renderMoodWidget(widgetBody, Todo.noteContentApi(note, 'moodValue'));
         else if (note.type === 'habits') Calendar.renderHabitsWidget(widgetBody, Todo.noteHabitDefsApi(note), Todo.noteHabitChecksApi(note));
         else if (note.type === 'photos') Calendar.renderPhotosWidget(widgetBody, Todo.noteContentApi(note, 'photos'));
         else if (note.type === 'moodboard') Todo.renderMoodboardWidget(widgetBody, note);
         else if (note.type === 'drawing') Calendar.renderDrawingWidget(widgetBody, Todo.noteContentApi(note, 'strokes'), userId, null, null);
-        inner.appendChild(widgetBody);
+        contentBody.appendChild(widgetBody);
         card.appendChild(inner);
         list.appendChild(card);
         return;
@@ -329,7 +358,7 @@ const Todo = {
 
       const items = (note.items || []).filter(it => showChecked || !it.checked);
       items.forEach(it => itemsContainer.appendChild(buildItemRow(it)));
-      inner.appendChild(itemsContainer);
+      contentBody.appendChild(itemsContainer);
       makeSortable(itemsContainer, orderedIds => {
         const allItems = note.items || [];
         const byId = {};
@@ -411,7 +440,7 @@ const Todo = {
         if (isAddExpanded) commitAdd();
         else expandAdd();
       });
-      inner.appendChild(addRow);
+      contentBody.appendChild(addRow);
 
       card.appendChild(inner);
       list.appendChild(card);

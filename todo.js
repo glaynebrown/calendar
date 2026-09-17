@@ -467,7 +467,19 @@ const Todo = {
         const file = e.target.files[0];
         if (!file) return;
         const reader = new FileReader();
-        reader.onload = () => { photoDataUrl = reader.result; refreshGrid(); };
+        reader.onload = () => {
+          // Downscale before storing -- an uncompressed photo can easily
+          // blow past this note's own 1MiB Firestore document limit, which
+          // silently fails the save (see compressImageDataUrl's comment in
+          // settings.js: the exact same failure mode already hit month
+          // backgrounds before this got added there).
+          compressImageDataUrl(reader.result, 1600, 0.75).then(dataUrl => {
+            photoDataUrl = dataUrl;
+            refreshGrid();
+          }).catch(() => {
+            alert("Couldn't process that image -- try a different one.");
+          });
+        };
         reader.readAsDataURL(file);
       });
       photoClearBtn.addEventListener('click', () => {

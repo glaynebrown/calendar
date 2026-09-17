@@ -546,12 +546,31 @@ html.text-white .month-label:hover {
 /* To-do */
 .notes-list {
   padding: 12px; margin: 4px 8px 18px; border-radius: 14px; background: var(--surface-2);
-  display: flex; flex-direction: column; gap: 10px; flex: 1;
+  display: flex; flex-wrap: wrap; align-items: flex-start; gap: 10px; flex: 1;
 }
 .note-card {
   border-radius: 14px; padding: 12px 14px; position: relative;
   background-size: cover; background-position: center;
+  flex: 1 0 100%; min-width: 0;
 }
+/* Half-width notes sit side by side with whichever other half-width note is
+   next to them in the (drag-reorderable) list, same idea as Planner's own
+   half-width widgets -- just plain flex-wrap here instead of Planner's
+   explicit drag-to-pair system, since a note's neighbor is already whatever
+   the list's own order says it is. */
+.note-card.width-half { flex: 1 0 calc(50% - 5px); }
+.note-width-btn svg { width: 15px; height: 15px; }
+/* Widget-type notes (Mood/Habit/Photo/Mood Board/Drawing) reuse Planner's own
+   widget body classes verbatim (.planner-mood-row, .planner-checklist-row,
+   .planner-photo-grid, .planner-drawing-body, .planner-moodboard-body) --
+   this wrapper just gives Mood Board enough room to actually place stickers
+   in, since a note card has no other minimum height of its own. */
+.note-widget-body.planner-moodboard-body { min-height: 180px; }
+.note-sticker-add-btn {
+  position: absolute; top: 4px; right: 4px; z-index: 6;
+  background: var(--surface); border: 0.5px solid var(--border); border-radius: 8px;
+}
+.note-sticker-add-btn svg { width: 15px; height: 15px; }
 .note-card-overlay { position: relative; z-index: 1; }
 .note-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; gap: 6px; }
 .note-title-group { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }

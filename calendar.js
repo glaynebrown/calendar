@@ -1831,6 +1831,33 @@ const Calendar = {
     document.addEventListener('pointerdown', closeOnOutsideClick);
   },
 
+  // Content adapters let mood/habits/photos/drawing's rendering be shared
+  // between Planner (content lives on that specific day, keyed by widget id)
+  // and Notes (content lives directly on that note's own document) -- each
+  // side just hands the render function a {get, set} pair over its own
+  // storage, so the actual widget UI/interaction code never needs to know
+  // which one it's talking to.
+  plannerContentApi(userId, dateStr, widgetId) {
+    return {
+      get: () => {
+        const d = Store.getPlannerDay(userId, dateStr);
+        return d.content ? d.content[widgetId] : undefined;
+      },
+      set: value => {
+        const d = Store.getPlannerDay(userId, dateStr);
+        d.content = d.content || {};
+        d.content[widgetId] = value;
+        Store.savePlannerDay(userId, dateStr, d);
+      },
+    };
+  },
+  plannerHabitDefsApi(userId, widgetId) {
+    return {
+      get: () => Store.getHabitDefs(userId, widgetId),
+      set: defs => Store.saveHabitDefs(userId, widgetId, defs),
+    };
+  },
+
   renderPlannerWidget(w, dateStr, userId) {
     // Custom widgets can be a named drawing surface too -- they stay just as
     // blank as the built-in one (no title, chrome hidden until tapped), since
@@ -1868,11 +1895,11 @@ const Calendar = {
     wrap.appendChild(body);
 
     if (w.type === 'events') this.renderPlannerEventsWidget(body, dateStr, userId);
-    else if (w.type === 'mood') this.renderPlannerMoodWidget(body, dateStr, userId, w.id);
-    else if (w.type === 'habits') this.renderPlannerHabitsWidget(body, dateStr, userId, w.id);
-    else if (w.type === 'photos') this.renderPlannerPhotosWidget(body, dateStr, userId, w.id);
+    else if (w.type === 'mood') this.renderMoodWidget(body, this.plannerContentApi(userId, dateStr, w.id));
+    else if (w.type === 'habits') this.renderHabitsWidget(body, this.plannerHabitDefsApi(userId, w.id), this.plannerContentApi(userId, dateStr, w.id));
+    else if (w.type === 'photos') this.renderPhotosWidget(body, this.plannerContentApi(userId, dateStr, w.id));
     else if (w.type === 'moodboard') { /* intentionally blank canvas */ }
-    else if (isDrawing) this.renderPlannerDrawingWidget(body, dateStr, userId, w.id, header.querySelector('.planner-eraser-btn'), header.querySelector('.planner-save-template-btn'));
+    else if (isDrawing) this.renderDrawingWidget(body, this.plannerContentApi(userId, dateStr, w.id), userId, header.querySelector('.planner-eraser-btn'), header.querySelector('.planner-save-template-btn'));
     else if (PLANNER_TEXT_TYPES.includes(w.type) || (w.type === 'custom' && w.kind === 'notes')) {
       this.renderPlannerNotesWidget(body, dateStr, userId, w.id, PLANNER_TEXT_PLACEHOLDERS[w.type] || 'Write something...');
     } else this.renderPlannerChecklistWidget(body, dateStr, userId, w.id);
@@ -2063,14 +2090,13 @@ const Calendar = {
     input.addEventListener('keydown', e => { if (e.key === 'Enter') commit(); });
   },
 
-  renderPlannerMoodWidget(body, dateStr, userId, widgetId) {
+  renderMoodWidget(body, contentApi) {
     const row = document.createElement('div');
     row.className = 'planner-mood-row';
     body.appendChild(row);
 
     function refresh() {
-      const dayData = Store.getPlannerDay(userId, dateStr);
-      const current = dayData.content && dayData.content[widgetId];
+      const current = contentApi.get();
       row.innerHTML = '';
       PLANNER_MOOD_OPTIONS.forEach(moodKey => {
         const btn = document.createElement('button');
@@ -2079,10 +2105,7 @@ const Calendar = {
         btn.setAttribute('aria-label', moodKey.replace('mood-', '').replace('-', ' '));
         btn.innerHTML = icon(moodKey);
         btn.addEventListener('click', () => {
-          const d = Store.getPlannerDay(userId, dateStr);
-          d.content = d.content || {};
-          d.content[widgetId] = d.content[widgetId] === moodKey ? null : moodKey;
-          Store.savePlannerDay(userId, dateStr, d);
+          contentApi.set(contentApi.get() === moodKey ? null : moodKey);
           refresh();
         });
         row.appendChild(btn);
@@ -2091,15 +2114,14 @@ const Calendar = {
     refresh();
   },
 
-  renderPlannerHabitsWidget(body, dateStr, userId, widgetId) {
+  renderHabitsWidget(body, defsApi, checksApi) {
     const list = document.createElement('div');
     list.className = 'planner-checklist';
     body.appendChild(list);
 
     function refresh() {
-      const habits = Store.getHabitDefs(userId, widgetId);
-      const dayData = Store.getPlannerDay(userId, dateStr);
-      const checked = (dayData.content && dayData.content[widgetId]) || {};
+      const habits = defsApi.get();
+      const checked = checksApi.get() || {};
       list.innerHTML = '';
       habits.forEach(habit => {
         const row = document.createElement('div');
@@ -2109,17 +2131,14 @@ const Calendar = {
           <input type="text" class="planner-checklist-text-input${checked[habit.id] ? ' checked' : ''}" value="${escapeAttr(habit.text)}">
         `;
         row.querySelector('input[type="checkbox"]').addEventListener('change', e => {
-          const d = Store.getPlannerDay(userId, dateStr);
-          d.content = d.content || {};
-          d.content[widgetId] = { ...(d.content[widgetId] || {}), [habit.id]: e.target.checked };
-          Store.savePlannerDay(userId, dateStr, d);
+          checksApi.set({ ...(checksApi.get() || {}), [habit.id]: e.target.checked });
           refresh();
         });
         const textInput = row.querySelector('.planner-checklist-text-input');
         function commitEdit() {
           const text = textInput.value.trim();
-          if (text) Store.saveHabitDefs(userId, widgetId, Store.getHabitDefs(userId, widgetId).map(h => h.id === habit.id ? { ...h, text } : h));
-          else Store.saveHabitDefs(userId, widgetId, Store.getHabitDefs(userId, widgetId).filter(h => h.id !== habit.id));
+          if (text) defsApi.set(defsApi.get().map(h => h.id === habit.id ? { ...h, text } : h));
+          else defsApi.set(defsApi.get().filter(h => h.id !== habit.id));
           refresh();
         }
         textInput.addEventListener('blur', commitEdit);
@@ -2140,7 +2159,7 @@ const Calendar = {
     function commit() {
       const text = input.value.trim();
       if (!text) return;
-      Store.saveHabitDefs(userId, widgetId, [...Store.getHabitDefs(userId, widgetId), { id: uid(), text }]);
+      defsApi.set([...defsApi.get(), { id: uid(), text }]);
       input.value = '';
       refresh();
       input.focus();
@@ -2148,14 +2167,13 @@ const Calendar = {
     input.addEventListener('keydown', e => { if (e.key === 'Enter') commit(); });
   },
 
-  renderPlannerPhotosWidget(body, dateStr, userId, widgetId) {
+  renderPhotosWidget(body, contentApi) {
     const grid = document.createElement('div');
     grid.className = 'planner-photo-grid';
     body.appendChild(grid);
 
     function refresh() {
-      const dayData = Store.getPlannerDay(userId, dateStr);
-      const photos = (dayData.content && dayData.content[widgetId]) || [];
+      const photos = contentApi.get() || [];
       grid.innerHTML = '';
       photos.forEach(photo => {
         const cell = document.createElement('div');
@@ -2165,10 +2183,7 @@ const Calendar = {
           <button type="button" class="icon-btn planner-photo-remove" aria-label="Remove photo">${icon('x')}</button>
         `;
         cell.querySelector('.planner-photo-remove').addEventListener('click', () => {
-          const d = Store.getPlannerDay(userId, dateStr);
-          d.content = d.content || {};
-          d.content[widgetId] = (d.content[widgetId] || []).filter(p => p.id !== photo.id);
-          Store.savePlannerDay(userId, dateStr, d);
+          contentApi.set((contentApi.get() || []).filter(p => p.id !== photo.id));
           refresh();
         });
         grid.appendChild(cell);
@@ -2192,12 +2207,17 @@ const Calendar = {
       if (!file) return;
       const reader = new FileReader();
       reader.onload = () => {
-        const d = Store.getPlannerDay(userId, dateStr);
-        d.content = d.content || {};
-        d.content[widgetId] = [...(d.content[widgetId] || []), { id: uid(), dataUrl: reader.result }];
-        Store.savePlannerDay(userId, dateStr, d);
-        fileInput.value = '';
-        refresh();
+        // Same 1MiB-per-document concern as everywhere else photos get
+        // stored (see settings.js's compressImageDataUrl comment) -- matters
+        // here even for Planner's own local-only storage now that this same
+        // function also backs Notes' Firestore-synced Photo Board widget.
+        compressImageDataUrl(reader.result, 1600, 0.75).then(dataUrl => {
+          contentApi.set([...(contentApi.get() || []), { id: uid(), dataUrl }]);
+          fileInput.value = '';
+          refresh();
+        }).catch(() => {
+          alert("Couldn't process that image -- try a different one.");
+        });
       };
       reader.readAsDataURL(file);
     });
@@ -2210,19 +2230,18 @@ const Calendar = {
   // normalized (0-1) point lists so they replay correctly at any widget size,
   // and only pen/mouse pointers draw — touch is left alone so a finger still
   // scrolls the page (and a finger tap toggles the widget's hidden controls).
-  renderPlannerDrawingWidget(body, dateStr, userId, widgetId, eraserBtn, saveTemplateBtn) {
+  renderDrawingWidget(body, contentApi, userId, eraserBtn, saveTemplateBtn) {
     body.classList.add('planner-drawing-body');
     const canvas = document.createElement('canvas');
     canvas.className = 'planner-drawing-canvas';
     body.appendChild(canvas);
     const ctx = canvas.getContext('2d');
 
-    const dayData = Store.getPlannerDay(userId, dateStr);
     // Each stroke is {tool: 'pen'|'eraser', points: [{x,y,p}, ...]}. Plain
     // arrays can't carry an extra .tool property through JSON.stringify, so
     // strokes are wrapped in an object instead -- otherwise the eraser tag
     // would silently vanish the moment it's saved and reloaded.
-    let strokes = ((dayData.content && dayData.content[widgetId]) || []).map(s =>
+    let strokes = (contentApi.get() || []).map(s =>
       Array.isArray(s) ? { tool: 'pen', points: s } : s);
     let currentStroke = null;
     let lastPoint = null;
@@ -2305,10 +2324,7 @@ const Calendar = {
     }
 
     function persist() {
-      const d = Store.getPlannerDay(userId, dateStr);
-      d.content = d.content || {};
-      d.content[widgetId] = strokes;
-      Store.savePlannerDay(userId, dateStr, d);
+      contentApi.set(strokes);
     }
 
     if (eraserBtn) {

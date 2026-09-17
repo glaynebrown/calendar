@@ -15,6 +15,25 @@ function contrastTextColor(hex) {
   return luminance > 0.6 ? '#26231f' : '#ffffff';
 }
 
+// The "Other" quick-add option: the same widget types Planner offers, minus
+// "Today's Events" (that one only means something for a specific calendar
+// day). Memories/Gratitude/Goals/Priorities aren't real new types at all --
+// they're just a plain 'note' or 'checklist' with a preset starting title
+// (and, for the two text ones, a placeholder), reusing all the same storage
+// and rendering a bare Note/To-do List already has.
+const NOTE_OTHER_TYPES = [
+  { type: 'mood', label: 'Mood Tracker' },
+  { type: 'habits', label: 'Habit Tracker' },
+  { type: 'photos', label: 'Photo Board' },
+  { type: 'moodboard', label: 'Mood Board' },
+  { type: 'drawing', label: 'Drawing/iPad' },
+  { type: 'note', label: 'Memories', placeholder: 'What made today memorable?' },
+  { type: 'note', label: 'Gratitude', placeholder: 'What are you grateful for today?' },
+  { type: 'checklist', label: 'Goals' },
+  { type: 'checklist', label: 'Priorities' },
+];
+const NOTE_TYPE_LABELS = { mood: 'Mood Tracker', habits: 'Habit Tracker', photos: 'Photo Board', moodboard: 'Mood Board', drawing: 'Drawing/iPad', note: 'Note', checklist: 'To-do List' };
+
 /* Generic pointer-based drag-to-reorder. Attach once to a container; children
    marked .sortable-item (with a .drag-handle inside) become reorderable. */
 function makeSortable(container, onReorder) {
@@ -139,7 +158,7 @@ const Todo = {
 
     notes.forEach(note => {
       const card = document.createElement('div');
-      card.className = 'note-card sortable-item';
+      card.className = 'note-card sortable-item' + (note.width === 'half' ? ' width-half' : '');
       card.dataset.id = note.id;
       const isPhoto = !!note.bgPhoto;
       if (isPhoto) {
@@ -169,14 +188,21 @@ const Todo = {
           <span class="note-title" style="color:${textColor}">${escapeHTML(note.title || 'Untitled')}</span>
           ${tag}
         </div>
+        <button type="button" class="note-menu-btn note-width-btn" style="color:${textColor};opacity:0.55;" aria-label="${note.width === 'half' ? 'Make full width' : 'Make half width'}">${icon('layout')}</button>
         <button type="button" class="note-menu-btn note-copy-btn" style="color:${textColor};opacity:0.55;" aria-label="Copy list as text">${icon('copy')}</button>
         <button class="note-menu-btn" style="color:${textColor};opacity:0.55;" aria-label="Note options">${icon('dots')}</button>`;
-      header.querySelector('.note-menu-btn:not(.note-copy-btn)').addEventListener('click', () => Todo.openNoteModal(note));
+      header.querySelector('.note-menu-btn:not(.note-copy-btn):not(.note-width-btn)').addEventListener('click', () => Todo.openNoteModal(note));
+      header.querySelector('.note-width-btn').addEventListener('click', () => {
+        Store.updateNote(note.id, { width: note.width === 'half' ? 'full' : 'half' });
+        Todo.render();
+      });
       const copyBtn = header.querySelector('.note-copy-btn');
       copyBtn.addEventListener('click', () => {
         const lines = [note.title || 'Untitled'];
         if (note.type === 'note') lines.push(note.text || '');
-        else (note.items || []).forEach(it => lines.push(`${it.checked ? '[x]' : '[ ]'} ${it.text}`));
+        else if (note.type === 'habits') (note.habitDefs || []).forEach(h => lines.push(`${(note.habitChecks || {})[h.id] ? '[x]' : '[ ]'} ${h.text}`));
+        else if (note.type === 'mood') { if (note.moodValue) lines.push(note.moodValue.replace('mood-', '').replace('-', ' ')); }
+        else if (!['photos', 'moodboard', 'drawing'].includes(note.type)) (note.items || []).forEach(it => lines.push(`${it.checked ? '[x]' : '[ ]'} ${it.text}`));
         const text = lines.join('\n');
         if (navigator.clipboard && navigator.clipboard.writeText) {
           navigator.clipboard.writeText(text).catch(() => {});
@@ -189,13 +215,28 @@ const Todo = {
       if (note.type === 'note') {
         const textarea = document.createElement('textarea');
         textarea.className = 'note-text-area';
-        textarea.placeholder = 'Write something...';
+        textarea.placeholder = note.placeholder || 'Write something...';
         textarea.value = note.text || '';
         textarea.style.color = textColor;
         textarea.addEventListener('change', () => {
           Store.updateNote(note.id, { text: textarea.value });
         });
         inner.appendChild(textarea);
+        card.appendChild(inner);
+        list.appendChild(card);
+        return;
+      }
+
+      if (['mood', 'habits', 'photos', 'moodboard', 'drawing'].includes(note.type)) {
+        const widgetBody = document.createElement('div');
+        widgetBody.className = 'note-widget-body';
+        widgetBody.style.color = textColor;
+        if (note.type === 'mood') Calendar.renderMoodWidget(widgetBody, Todo.noteContentApi(note, 'moodValue'));
+        else if (note.type === 'habits') Calendar.renderHabitsWidget(widgetBody, Todo.noteHabitDefsApi(note), Todo.noteHabitChecksApi(note));
+        else if (note.type === 'photos') Calendar.renderPhotosWidget(widgetBody, Todo.noteContentApi(note, 'photos'));
+        else if (note.type === 'moodboard') Todo.renderMoodboardWidget(widgetBody, note);
+        else if (note.type === 'drawing') Calendar.renderDrawingWidget(widgetBody, Todo.noteContentApi(note, 'strokes'), userId, null, null);
+        inner.appendChild(widgetBody);
         card.appendChild(inner);
         list.appendChild(card);
         return;
@@ -368,7 +409,7 @@ const Todo = {
     if (info.selStart != null) input.setSelectionRange(info.selStart, info.selEnd);
   },
 
-  openNoteModal(note, newType) {
+  openNoteModal(note, newType, presetMeta) {
     const userId = Store.getCurrentUserId();
     const isEdit = !!note;
     const noteType = isEdit ? (note.type || 'checklist') : (newType || 'checklist');
@@ -377,10 +418,11 @@ const Todo = {
     const presetIdx = note ? presets.findIndex(p => p.bg === note.bgColor) : 0;
     const isCustomColor = !!(note && note.bgColor && !note.bgPhoto && presetIdx < 0);
     const otherPeople = Store.getKnownPeople(userId).filter(p => p.id !== userId);
-    const modalTitle = isEdit ? 'Edit note' : (noteType === 'note' ? 'New Note' : 'New To-do List');
+    const modalTitle = isEdit ? 'Edit note' : `New ${(presetMeta && presetMeta.label) || NOTE_TYPE_LABELS[noteType] || 'Note'}`;
+    const defaultTitle = note ? note.title : (presetMeta ? presetMeta.label : '');
     const body = `
       <div class="modal-header"><h2>${modalTitle}</h2><button class="modal-close" id="nt-close">${icon('x')}</button></div>
-      <div class="field"><input type="text" id="nt-title" value="${note ? escapeAttr(note.title) : ''}" placeholder="Title"></div>
+      <div class="field"><input type="text" id="nt-title" value="${escapeAttr(defaultTitle || '')}" placeholder="Title"></div>
       <div class="field-row">
         <div class="field">
           <label>Background</label>
@@ -515,9 +557,22 @@ const Todo = {
         if (isEdit) {
           Store.updateNote(note.id, { title, bgColor, textColor, textColorManual, bgPhoto: photoDataUrl, sharedWith });
         } else {
+          // Seeds each widget type's own fields fresh -- everything else
+          // (background, sharing, width) works identically across every
+          // type, only the "body" content differs. A Memories/Gratitude
+          // note is a plain 'note' underneath, just with a starting
+          // placeholder baked in (see NOTE_OTHER_TYPES).
+          const extra = {};
+          if (noteType === 'mood') extra.moodValue = null;
+          else if (noteType === 'habits') { extra.habitDefs = []; extra.habitChecks = {}; extra.habitChecksDate = ''; }
+          else if (noteType === 'photos') extra.photos = [];
+          else if (noteType === 'moodboard') extra.stickers = [];
+          else if (noteType === 'drawing') extra.strokes = [];
+          else if (noteType === 'note' && presetMeta && presetMeta.placeholder) extra.placeholder = presetMeta.placeholder;
           Store.addNote({
             id: uid(), ownerId, title, bgColor, textColor, textColorManual, bgPhoto: photoDataUrl,
-            type: noteType, items: [], text: '', order: Store.getNotes().filter(n => n.ownerId === ownerId).length, sharedWith,
+            type: noteType, items: [], text: '', width: 'full',
+            order: Store.getNotes().filter(n => n.ownerId === ownerId).length, sharedWith, ...extra,
           });
         }
         closeModal();
@@ -535,12 +590,93 @@ const Todo = {
       <div class="btn-row">
         <button type="button" class="btn" id="ntc-checklist" style="flex:1;">To-do List</button>
         <button type="button" class="btn" id="ntc-note" style="flex:1;">Note</button>
+        <button type="button" class="btn" id="ntc-other" style="flex:1;">Other</button>
       </div>
     `, root => {
       root.querySelector('#ntc-close').addEventListener('click', closeModal);
       root.querySelector('#ntc-checklist').addEventListener('click', () => { closeModal(); Todo.openNoteModal(null, 'checklist'); });
       root.querySelector('#ntc-note').addEventListener('click', () => { closeModal(); Todo.openNoteModal(null, 'note'); });
+      root.querySelector('#ntc-other').addEventListener('click', () => { closeModal(); Todo.openOtherTypeMenu(); });
     });
+  },
+
+  openOtherTypeMenu() {
+    openModal(`
+      <div class="modal-header"><h2>New</h2><button class="modal-close" id="nto-close">${icon('x')}</button></div>
+      <div id="nto-list"></div>
+    `, root => {
+      root.querySelector('#nto-close').addEventListener('click', closeModal);
+      const list = root.querySelector('#nto-list');
+      NOTE_OTHER_TYPES.forEach(opt => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'menu-item';
+        btn.textContent = opt.label;
+        btn.addEventListener('click', () => {
+          closeModal();
+          Todo.openNoteModal(null, opt.type, opt);
+        });
+        list.appendChild(btn);
+      });
+    });
+  },
+
+  // ---- content adapters: let mood/habits/photos/drawing's rendering code
+  // (shared with Planner -- see calendar.js's plannerContentApi) read/write
+  // straight from this note's own Firestore document instead of a specific
+  // calendar day's local content, so a Notes-side widget is its own
+  // permanent, synced thing rather than tied to today. ----
+  noteContentApi(note, field) {
+    return {
+      get: () => note[field],
+      set: value => { note[field] = value; Store.updateNote(note.id, { [field]: value }); },
+    };
+  },
+  noteHabitDefsApi(note) {
+    return {
+      get: () => note.habitDefs || [],
+      set: defs => { note.habitDefs = defs; Store.updateNote(note.id, { habitDefs: defs }); },
+    };
+  },
+  // Habit names persist, but which ones are checked resets every day --
+  // compared lazily against today's date rather than an explicit midnight
+  // job, so it self-heals the moment the note is next opened on a new day.
+  noteHabitChecksApi(note) {
+    return {
+      get: () => {
+        const today = formatISO(new Date());
+        return note.habitChecksDate === today ? (note.habitChecks || {}) : {};
+      },
+      set: checks => {
+        const today = formatISO(new Date());
+        note.habitChecks = checks;
+        note.habitChecksDate = today;
+        Store.updateNote(note.id, { habitChecks: checks, habitChecksDate: today });
+      },
+    };
+  },
+  // Mood Board: a bounded sticker canvas scoped to just this one note, reusing
+  // Calendar's placement/drag/resize/rotate engine and sticker book verbatim
+  // (see calendar.js's renderPlacedStickers/toggleStickerBook comment --
+  // they already take their storage as plain get/save callbacks specifically
+  // so Planner, Week view, and now Notes can all share them).
+  renderMoodboardWidget(body, note) {
+    body.classList.add('planner-moodboard-body');
+    body.style.position = 'relative';
+    const layer = document.createElement('div');
+    layer.className = 'planner-stickers-layer';
+    body.appendChild(layer);
+    const getStickers = () => note.stickers || [];
+    const saveStickers = stickers => { note.stickers = stickers; Store.updateNote(note.id, { stickers }); };
+    Calendar.renderPlacedStickers(layer, getStickers, saveStickers);
+
+    const addBtn = document.createElement('button');
+    addBtn.type = 'button';
+    addBtn.className = 'icon-btn note-sticker-add-btn';
+    addBtn.setAttribute('aria-label', 'Add sticker');
+    addBtn.innerHTML = icon('image');
+    addBtn.addEventListener('click', () => Calendar.toggleStickerBook(body, Store.getCurrentUserId(), layer, getStickers, saveStickers));
+    body.appendChild(addBtn);
   },
 };
 

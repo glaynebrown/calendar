@@ -90,6 +90,13 @@ function makeSortable(container, onReorder) {
 
 const Todo = {
   expandedAddFor: null, // id of the note whose "add item" input is currently open
+  // Id of an item newly inserted mid-list (see buildItemRow's Enter
+  // handling) that should be sitting in edit mode. The in-place DOM
+  // insertion already opens it immediately, but a live-sync echo re-render
+  // landing before the user types anything would otherwise silently revert
+  // it to a plain row -- render() re-opens it whenever this is still set,
+  // and it's cleared the moment that item's own edit actually commits.
+  pendingEditItemId: null,
 
   init() {
     document.getElementById('show-checked-btn').addEventListener('click', () => {
@@ -344,8 +351,29 @@ const Todo = {
           // when a focused input is smaller than 16px. The "Add item" input
           // right below already does the same thing for the same reason.
           input.style.cssText = `color:${textColor};background:rgba(255,255,255,0.5);border:none;border-radius:4px;padding:2px 4px;font-size:16px;flex:1;min-width:0;`;
-          function commit() {
+          // committed guards against double-firing: replacing/removing row
+          // below (from Enter's own commit) blurs this input as a side
+          // effect, which would otherwise fire the blur handler's commit a
+          // second time on the same edit.
+          let committed = false;
+          // Enter here means "insert a new blank item right below this one
+          // and start editing it" -- not just "save and stop", so you can
+          // go back and slot a forgotten item into the middle of a list
+          // without retyping everything after it. Plain tap-away (blur)
+          // still just saves in place, same as before.
+          //
+          // This edits the DOM in place rather than calling Todo.render()
+          // (same reasoning as the "Add item" row's own comment below): a
+          // full re-render here is exactly the case _captureFocus/
+          // _restoreFocus deliberately don't cover for item-text editing,
+          // so a live-sync echo landing mid-edit would silently discard
+          // whatever's in flight.
+          function commit(insertNext) {
+            if (committed) return;
+            committed = true;
+            if (Todo.pendingEditItemId === it.id) Todo.pendingEditItemId = null;
             const val = input.value.trim();
+            const wasDeleted = !val;
             if (val) {
               it.text = val;
             } else {
@@ -353,12 +381,35 @@ const Todo = {
               // off is no longer the only way to remove one.
               note.items = (note.items || []).filter(i => i.id !== it.id);
             }
+            let newItem = null;
+            if (insertNext) {
+              newItem = { id: uid(), text: '', checked: false };
+              const idx = (note.items || []).findIndex(i => i.id === it.id);
+              if (idx >= 0) note.items.splice(idx + 1, 0, newItem);
+              else note.items.push(newItem);
+              Todo.pendingEditItemId = newItem.id;
+            }
             Store.updateNote(note.id, { items: note.items });
-            Todo.render();
+
+            const insertAfterNode = row.nextSibling;
+            if (wasDeleted) row.remove();
+            else row.replaceWith(buildItemRow(it));
+
+            if (newItem) {
+              // Same iOS Return-key/keyboard-dismiss race as the "Add item"
+              // row below -- deferring lets iOS's own dismiss handling run
+              // first, so focusing the new item right after doesn't lose
+              // that race and get closed again immediately.
+              setTimeout(() => {
+                const newRow = buildItemRow(newItem);
+                itemsContainer.insertBefore(newRow, insertAfterNode);
+                if (Todo.pendingEditItemId === newItem.id) newRow.querySelector('.note-item-text').click();
+              }, 0);
+            }
           }
-          input.addEventListener('blur', commit);
+          input.addEventListener('blur', () => commit(false));
           input.addEventListener('keydown', e => {
-            if (e.key === 'Enter') input.blur();
+            if (e.key === 'Enter') commit(true);
           });
           textEl.replaceWith(input);
           input.focus();
@@ -369,7 +420,14 @@ const Todo = {
       }
 
       const items = (note.items || []).filter(it => showChecked || !it.checked);
-      items.forEach(it => itemsContainer.appendChild(buildItemRow(it)));
+      items.forEach(it => {
+        const row = buildItemRow(it);
+        itemsContainer.appendChild(row);
+        // Re-opens a just-inserted item's edit mode if a live-sync echo
+        // re-render landed before the user got to type into it -- see
+        // Todo.pendingEditItemId's own comment.
+        if (Todo.pendingEditItemId === it.id) row.querySelector('.note-item-text').click();
+      });
       contentBody.appendChild(itemsContainer);
       makeSortable(itemsContainer, orderedIds => {
         const allItems = note.items || [];
@@ -416,6 +474,10 @@ const Todo = {
         Store.updateNote(note.id, { items: note.items });
         itemsContainer.appendChild(buildItemRow(newItem));
         addInput.value = '';
+        // As the note grows taller item by item, keep the input you're
+        // actively typing into in view instead of letting the note just
+        // keep growing downward out from under you.
+        addInput.scrollIntoView({ block: 'nearest' });
         if (!keepFocus) return;
         // iOS Safari's on-screen keyboard treats Return on a plain text
         // input as "done" and starts dismissing it the instant the keydown
@@ -423,7 +485,14 @@ const Todo = {
         // loses that race and the keyboard closes anyway even though this
         // exact input is still focused in the DOM. Deferring to the next
         // tick, after iOS's own dismiss handling has already run, wins it.
-        setTimeout(() => addInput.focus(), 0);
+        // The browser's own focus(scrollable-into-view) behavior can then
+        // re-scroll things on its own terms right after, less precisely
+        // than the explicit call above -- re-asserting it once more here,
+        // after focus() has had its say, is what makes it stick.
+        setTimeout(() => {
+          addInput.focus();
+          addInput.scrollIntoView({ block: 'nearest' });
+        }, 0);
       }
       addInput.addEventListener('keydown', e => {
         if (e.key === 'Enter') commitAdd();

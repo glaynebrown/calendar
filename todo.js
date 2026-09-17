@@ -22,6 +22,7 @@ function contrastTextColor(hex) {
 // (and, for the two text ones, a placeholder), reusing all the same storage
 // and rendering a bare Note/To-do List already has.
 const NOTE_OTHER_TYPES = [
+  { type: 'bullets', label: 'Bulleted List' },
   { type: 'mood', label: 'Mood Tracker' },
   { type: 'habits', label: 'Habit Tracker' },
   { type: 'photos', label: 'Photo Board' },
@@ -32,7 +33,7 @@ const NOTE_OTHER_TYPES = [
   { type: 'checklist', label: 'Goals' },
   { type: 'checklist', label: 'Priorities' },
 ];
-const NOTE_TYPE_LABELS = { mood: 'Mood Tracker', habits: 'Habit Tracker', photos: 'Photo Board', moodboard: 'Mood Board', drawing: 'Drawing/iPad', note: 'Note', checklist: 'To-do List' };
+const NOTE_TYPE_LABELS = { mood: 'Mood Tracker', habits: 'Habit Tracker', photos: 'Photo Board', moodboard: 'Mood Board', drawing: 'Drawing/iPad', note: 'Note', checklist: 'To-do List', bullets: 'Bulleted List' };
 
 /* Generic pointer-based drag-to-reorder. Attach once to a container; children
    marked .sortable-item (with a .drag-handle inside) become reorderable. */
@@ -248,6 +249,7 @@ const Todo = {
         if (note.type === 'note') lines.push(note.text || '');
         else if (note.type === 'habits') (note.habitDefs || []).forEach(h => lines.push(`${(note.habitChecks || {})[h.id] ? '[x]' : '[ ]'} ${h.text}`));
         else if (note.type === 'mood') { if (note.moodValue) lines.push(note.moodValue.replace('mood-', '').replace('-', ' ')); }
+        else if (note.type === 'bullets') (note.items || []).forEach(it => lines.push(`• ${it.text}`));
         else if (!['photos', 'moodboard', 'drawing'].includes(note.type)) (note.items || []).forEach(it => lines.push(`${it.checked ? '[x]' : '[ ]'} ${it.text}`));
         const text = lines.join('\n');
         if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -307,21 +309,31 @@ const Todo = {
 
       const itemsContainer = document.createElement('div');
       itemsContainer.className = 'note-items';
+      // A bulleted list is the same item shape/storage as a to-do list --
+      // just a plain marker instead of a checkbox, and no "done" state to
+      // toggle (matches the to-do list's own text size too, since it's
+      // literally the same .note-item/.note-item-text rendering).
+      const isBulletList = note.type === 'bullets';
 
       function buildItemRow(it) {
         const row = document.createElement('div');
-        row.className = 'note-item sortable-item' + (it.checked ? ' checked' : '');
+        row.className = 'note-item sortable-item' + (!isBulletList && it.checked ? ' checked' : '');
         row.dataset.id = it.id;
         row.style.color = textColor;
+        const marker = isBulletList
+          ? `<span class="note-bullet" style="color:${textColor};opacity:0.55;">•</span>`
+          : `<button type="button" class="note-check" style="background:none;border:none;padding:0;display:flex;color:inherit;" aria-label="Toggle done">${icon(it.checked ? 'check-square' : 'square')}</button>`;
         row.innerHTML = `<button type="button" class="drag-handle" style="color:${textColor};opacity:0.55;" aria-label="Reorder item">${icon('grip')}</button>
-          <button type="button" class="note-check" style="background:none;border:none;padding:0;display:flex;color:inherit;" aria-label="Toggle done">${icon(it.checked ? 'check-square' : 'square')}</button>
+          ${marker}
           <span class="note-item-text">${escapeHTML(it.text)}</span>`;
 
-        row.querySelector('.note-check').addEventListener('click', () => {
-          it.checked = !it.checked;
-          Store.updateNote(note.id, { items: note.items });
-          Todo.render();
-        });
+        if (!isBulletList) {
+          row.querySelector('.note-check').addEventListener('click', () => {
+            it.checked = !it.checked;
+            Store.updateNote(note.id, { items: note.items });
+            Todo.render();
+          });
+        }
 
         const textEl = row.querySelector('.note-item-text');
         textEl.addEventListener('click', () => {

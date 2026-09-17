@@ -77,8 +77,14 @@ input, select, textarea {
 #app {
   max-width: 480px;
   margin: 0 auto;
-  min-height: 100vh;
-  min-height: 100dvh; /* accounts for mobile Safari's address/toolbar chrome, unlike 100vh */
+  /* A fixed height (not just min-height) so #app can never grow taller than
+     the screen -- html/body block all scrolling on purpose (see their own
+     comment), so anything that pushed #app past the viewport used to become
+     permanently unreachable with no scrollbar anywhere to reach it. Fixing
+     the height here is what makes each tab's own overflow-y:auto actually
+     the thing that scrolls, instead of the whole page silently overflowing. */
+  height: 100vh;
+  height: 100dvh; /* accounts for mobile Safari's address/toolbar chrome, unlike 100vh */
   position: relative;
   display: flex;
   flex-direction: column;
@@ -334,12 +340,16 @@ html.bg-through-grid .planner-view { background: transparent; }
 .planner-widget.pair-drop-target { box-shadow: inset -3px 0 0 var(--accent); border-radius: 12px 6px 6px 12px; }
 .planner-widget.reorder-drop-before, .planner-widget-pair.reorder-drop-before { box-shadow: 0 -3px 0 var(--accent); }
 .planner-widget.reorder-drop-after, .planner-widget-pair.reorder-drop-after { box-shadow: 0 3px 0 var(--accent); }
+/* Plain and low-opacity, same as the other header icon buttons -- no boxed
+   background, so the corner doesn't read as a more prominent button than
+   drag-handle/delete/etc. right next to it. */
 .planner-widget-resize-handle {
   position: absolute; right: 4px; bottom: 4px; width: 22px; height: 22px; padding: 0;
-  border-radius: 6px; background: var(--surface-2); border: 0.5px solid var(--border);
-  color: var(--text-muted); display: flex; align-items: center; justify-content: center;
+  background: none; border: none;
+  color: var(--text-muted); opacity: 0.5; display: flex; align-items: center; justify-content: center;
   cursor: nwse-resize; touch-action: none;
 }
+.planner-widget-resize-handle:hover { opacity: 1; }
 .planner-widget-resize-handle svg { width: 13px; height: 13px; }
 .planner-widget-header { display: flex; align-items: center; gap: 4px; margin-bottom: 8px; }
 .planner-widget-title { flex: 1; font-size: 13px; font-weight: 600; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -547,6 +557,7 @@ html.text-white .month-label:hover {
 .notes-list {
   padding: 12px; margin: 4px 8px 18px; border-radius: 14px; background: var(--surface-2);
   display: flex; flex-wrap: wrap; align-items: flex-start; align-content: flex-start; gap: 10px; flex: 1;
+  min-height: 0; overflow-y: auto;
 }
 .note-card {
   border-radius: 14px; padding: 12px 14px; position: relative;
@@ -560,14 +571,10 @@ html.text-white .month-label:hover {
    the list's own order says it is. */
 .note-card.width-half { flex: 1 0 calc(50% - 5px); }
 /* Same corner-drag resize as Planner's widgets (see todo.js's resizeHandle
-   wiring). z-index above .note-card-overlay so it stays reachable even over
-   a full-height photo/checklist/widget body. Styled to match the other
-   header icon buttons (plain, low-opacity, no background chip) rather than
-   Planner's own boxed handle -- a note card's corner is small enough that
-   a solid square there reads as a much more prominent button than intended. */
+   wiring), styling included. z-index above .note-card-overlay so it stays
+   reachable even over a full-height photo/checklist/widget body. */
 .note-resize-handle {
-  z-index: 2; cursor: ew-resize;
-  background: none; border: none; box-shadow: none; padding: 4px;
+  z-index: 2; cursor: nwse-resize; padding: 4px;
 }
 /* Widget-type notes (Mood/Habit/Photo/Mood Board/Drawing) reuse Planner's own
    widget body classes verbatim (.planner-mood-row, .planner-checklist-row,
@@ -591,6 +598,7 @@ html.text-white .month-label:hover {
 .note-items { display: flex; flex-direction: column; }
 .note-item { display: flex; gap: 6px; align-items: flex-start; padding: 3px 0; font-size: 13px; }
 .note-item svg { width: 17px; height: 17px; flex-shrink: 0; margin-top: 1px; }
+.note-bullet { width: 17px; flex-shrink: 0; text-align: center; font-size: 16px; line-height: 1.3; }
 .note-item.checked { text-decoration: line-through; opacity: 0.6; }
 .note-item-text { flex: 1; min-width: 0; cursor: text; padding: 1px 2px; }
 .note-add-item { display: flex; align-items: center; gap: 6px; margin-top: 6px; }

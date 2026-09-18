@@ -384,103 +384,140 @@ const Todo = {
           });
         }
 
-        const textEl = row.querySelector('.note-item-text');
-        // Named and called directly (not just wired to the click listener)
-        // so the "insert next item" flow below can open this row's editor
-        // straight from within the Enter keydown that triggered it, instead
-        // of going through a synthetic .click() dispatch -- iOS Safari
-        // appears to treat a focus() reached via a fabricated click event as
-        // less "trusted" than one called directly inside the real keydown
-        // handler's own call stack, even though both are synchronous.
-        function openEditor() {
-          const input = document.createElement('input');
-          input.type = 'text';
-          input.value = it.text;
-          // 16px, not the row's 13px -- iOS Safari auto-zooms the whole page
-          // when a focused input is smaller than 16px. The "Add item" input
-          // right below already does the same thing for the same reason.
-          input.style.cssText = `color:${textColor};background:rgba(255,255,255,0.5);border:none;border-radius:4px;padding:2px 4px;font-size:16px;flex:1;min-width:0;`;
-          // committed guards against double-firing: replacing/removing row
-          // below (from Enter's own commit) blurs this input as a side
-          // effect, which would otherwise fire the blur handler's commit a
-          // second time on the same edit.
-          let committed = false;
-          // Enter here means "insert a new blank item right below this one
-          // and start editing it" -- not just "save and stop", so you can
-          // go back and slot a forgotten item into the middle of a list
-          // without retyping everything after it. Plain tap-away (blur)
-          // still just saves in place, same as before.
-          //
-          // This edits the DOM in place rather than calling Todo.render()
-          // (same reasoning as the "Add item" row's own comment below): a
-          // full re-render here is exactly the case _captureFocus/
-          // _restoreFocus deliberately don't cover for item-text editing,
-          // so a live-sync echo landing mid-edit would silently discard
-          // whatever's in flight.
-          function commit(insertNext) {
-            if (committed) return;
-            committed = true;
-            if (Todo.pendingEditItemId === it.id) Todo.pendingEditItemId = null;
-            const val = input.value.trim();
-            const wasDeleted = !val;
-            if (val) {
-              it.text = val;
-            } else {
-              // Erasing an item's text entirely deletes it -- checking it
-              // off is no longer the only way to remove one.
-              note.items = (note.items || []).filter(i => i.id !== it.id);
-            }
-            // An empty item just deletes, full stop -- it never also spawns
-            // a new blank one, since there's nothing there to "split".
-            let newItem = null;
-            if (insertNext && !wasDeleted) {
-              newItem = { id: uid(), text: '', checked: false };
-              const idx = (note.items || []).findIndex(i => i.id === it.id);
-              if (idx >= 0) note.items.splice(idx + 1, 0, newItem);
-              else note.items.push(newItem);
-              Todo.pendingEditItemId = newItem.id;
-            }
-            Store.updateNote(note.id, { items: note.items });
+        row.querySelector('.note-item-text').addEventListener('click', () => openItemEditor(row, it));
+        return row;
+      }
 
-            const insertAfterNode = row.nextSibling;
-
-            // Focus the new item FIRST, while this row's input is still
-            // attached and focused -- moving focus straight from one live
-            // input to another is a clean handoff. Removing/replacing this
-            // row before that (the old order) drops focus to nothing for a
-            // moment, and iOS Safari can take that as its cue to dismiss the
-            // keyboard even though a new input grabs focus synchronously
-            // right after -- by the time it does, the keyboard's already on
-            // its way down. Synchronous, not deferred, for the same reason
-            // noted below: a setTimeout leaves a window where the focus can
-            // silently fail to stick at all.
-            if (newItem) {
-              const newRow = buildItemRow(newItem);
-              itemsContainer.insertBefore(newRow, insertAfterNode);
-              newRow._openEditor();
-            }
-
-            if (wasDeleted) row.remove();
-            else row.replaceWith(buildItemRow(it));
-            renumber();
+      // Converts rowEl's static text into an editable input and wires up
+      // save-on-blur plus "Enter inserts a new item right below and starts
+      // editing it". Pass reuseInput (an existing, already-focused <input>)
+      // to move an in-progress edit session onto a freshly-inserted item
+      // instead of creating a new element -- see the call site below for
+      // why that's the part that actually keeps iOS's keyboard open.
+      function openItemEditor(rowEl, itemObj, reuseInput) {
+        const input = reuseInput || document.createElement('input');
+        if (reuseInput) {
+          // Reusing means detaching whatever item this input was wired to
+          // right before, so its old commit() doesn't also fire.
+          if (input._blurHandler) input.removeEventListener('blur', input._blurHandler);
+          if (input._keydownHandler) input.removeEventListener('keydown', input._keydownHandler);
+        }
+        input.type = 'text';
+        input.value = itemObj.text;
+        // 16px, not the row's 13px -- iOS Safari auto-zooms the whole page
+        // when a focused input is smaller than 16px. The "Add item" input
+        // below does the same thing for the same reason.
+        input.style.cssText = `color:${textColor};background:rgba(255,255,255,0.5);border:none;border-radius:4px;padding:2px 4px;font-size:16px;flex:1;min-width:0;`;
+        // committed guards against double-firing: replacing/removing rowEl
+        // below (from Enter's own commit) blurs this input as a side
+        // effect, which would otherwise fire the blur handler's commit a
+        // second time on the same edit.
+        let committed = false;
+        // Enter here means "insert a new blank item right below this one
+        // and start editing it" -- not just "save and stop", so you can go
+        // back and slot a forgotten item into the middle of a list without
+        // retyping everything after it. Plain tap-away (blur) still just
+        // saves in place, same as before.
+        //
+        // This edits the DOM in place rather than calling Todo.render()
+        // (same reasoning as the "Add item" row's own comment below): a
+        // full re-render here is exactly the case _captureFocus/
+        // _restoreFocus deliberately don't cover for item-text editing, so
+        // a live-sync echo landing mid-edit would silently discard
+        // whatever's in flight.
+        function commit(insertNext) {
+          if (committed) return;
+          committed = true;
+          if (Todo.pendingEditItemId === itemObj.id) Todo.pendingEditItemId = null;
+          const val = input.value.trim();
+          const wasDeleted = !val;
+          if (val) {
+            itemObj.text = val;
+          } else {
+            // Erasing an item's text entirely deletes it -- checking it off
+            // is no longer the only way to remove one.
+            note.items = (note.items || []).filter(i => i.id !== itemObj.id);
           }
-          input.addEventListener('blur', () => commit(false));
-          input.addEventListener('keydown', e => {
-            if (e.key !== 'Enter') return;
-            // Same iOS default-action concern as the "Add item" row's own
-            // Return handler -- stop it here too, before it can dismiss the
-            // keyboard out from under the new item this is about to focus.
-            e.preventDefault();
-            commit(true);
-          });
-          textEl.replaceWith(input);
+          // An empty item just deletes, full stop -- it never also spawns a
+          // new blank one, since there's nothing there to "split".
+          let newItem = null;
+          if (insertNext && !wasDeleted) {
+            newItem = { id: uid(), text: '', checked: false };
+            const idx = (note.items || []).findIndex(i => i.id === itemObj.id);
+            if (idx >= 0) note.items.splice(idx + 1, 0, newItem);
+            else note.items.push(newItem);
+            Todo.pendingEditItemId = newItem.id;
+          }
+          Store.updateNote(note.id, { items: note.items });
+
+          if (wasDeleted) {
+            rowEl.remove();
+            renumber();
+            return;
+          }
+
+          if (newItem) {
+            // rowEl and input are left COMPLETELY untouched -- not moved,
+            // not removed, not replaced. Testing showed that even moving a
+            // focused input to a new (already-connected) parent still
+            // blurs it in practice, the same as removing it outright, so
+            // there's no DOM operation on the input itself that survives
+            // with focus intact. Instead, a fresh static row for the OLD
+            // (just-committed) item is inserted right before this one, and
+            // this exact row is simply repointed at the NEW item in place:
+            // its id, checkbox binding (if any), and input value change,
+            // but its position, parent, and connectedness never do, so
+            // there's nothing left that could trigger a blur.
+            const staticOldRow = buildItemRow(itemObj);
+            rowEl.insertAdjacentElement('beforebegin', staticOldRow);
+            rowEl.dataset.id = newItem.id;
+            rowEl.classList.remove('checked');
+            if (hasCheckbox) {
+              const oldCheckBtn = rowEl.querySelector('.note-check');
+              const freshCheckBtn = document.createElement('button');
+              freshCheckBtn.type = 'button';
+              freshCheckBtn.className = 'note-check';
+              freshCheckBtn.style.cssText = 'background:none;border:none;padding:0;display:flex;color:inherit;';
+              freshCheckBtn.setAttribute('aria-label', 'Toggle done');
+              freshCheckBtn.innerHTML = icon('square');
+              freshCheckBtn.addEventListener('click', () => {
+                newItem.checked = !newItem.checked;
+                Store.updateNote(note.id, { items: note.items });
+                Todo.render();
+              });
+              oldCheckBtn.replaceWith(freshCheckBtn);
+            }
+            input.value = '';
+            openItemEditor(rowEl, newItem, input);
+          } else {
+            rowEl.replaceWith(buildItemRow(itemObj));
+          }
+          renumber();
+        }
+        const blurHandler = () => commit(false);
+        const keydownHandler = e => {
+          if (e.key !== 'Enter') return;
+          // Same iOS default-action concern as the "Add item" row's own
+          // Return handler -- stop it here too, before it can dismiss the
+          // keyboard out from under the row this is about to move to.
+          e.preventDefault();
+          commit(true);
+        };
+        input.addEventListener('blur', blurHandler);
+        input.addEventListener('keydown', keydownHandler);
+        input._blurHandler = blurHandler;
+        input._keydownHandler = keydownHandler;
+
+        if (!reuseInput) {
+          const textEl = rowEl.querySelector('.note-item-text');
+          if (textEl) textEl.replaceWith(input);
+          else rowEl.appendChild(input);
           input.focus();
           input.select();
         }
-        textEl.addEventListener('click', openEditor);
-        row._openEditor = openEditor;
-
-        return row;
+        // When reusing, input is already exactly where it needs to be
+        // inside rowEl -- nothing to insert, move, or refocus, which is
+        // the whole point (see this function's call site for why).
       }
 
       const items = (note.items || []).filter(it => showChecked || !it.checked);
@@ -490,7 +527,7 @@ const Todo = {
         // Re-opens a just-inserted item's edit mode if a live-sync echo
         // re-render landed before the user got to type into it -- see
         // Todo.pendingEditItemId's own comment.
-        if (Todo.pendingEditItemId === it.id) row._openEditor();
+        if (Todo.pendingEditItemId === it.id) openItemEditor(row, it);
       });
       contentBody.appendChild(itemsContainer);
       makeSortable(itemsContainer, orderedIds => {

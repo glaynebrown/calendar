@@ -412,7 +412,12 @@ const Todo = {
           }
           input.addEventListener('blur', () => commit(false));
           input.addEventListener('keydown', e => {
-            if (e.key === 'Enter') commit(true);
+            if (e.key !== 'Enter') return;
+            // Same iOS default-action concern as the "Add item" row's own
+            // Return handler -- stop it here too, before it can dismiss the
+            // keyboard out from under the new item this is about to focus.
+            e.preventDefault();
+            commit(true);
           });
           textEl.replaceWith(input);
           input.focus();
@@ -498,7 +503,18 @@ const Todo = {
         }, 0);
       }
       addInput.addEventListener('keydown', e => {
-        if (e.key === 'Enter') commitAdd();
+        if (e.key !== 'Enter') return;
+        // Without this, iOS Safari's own default action for Return on a
+        // plain text input -- dismissing the on-screen keyboard -- already
+        // starts running before this handler even finishes, and the
+        // deferred refocus below wins back DOM focus but not always the
+        // keyboard itself. Once the keyboard actually closes, iOS resizes
+        // the viewport back to full height, which is what was showing up
+        // as the page scrolling back up on its own mid-list. Stopping the
+        // default action here is what keeps the keyboard (and the scroll
+        // position) from ever moving in the first place.
+        e.preventDefault();
+        commitAdd();
       });
       addInput.addEventListener('blur', () => {
         // Deferred, not immediate: a blur here doesn't necessarily mean the

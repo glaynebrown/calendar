@@ -165,6 +165,17 @@ const Todo = {
     // whole list back to the top out from under you, even though focus
     // itself is separately preserved below.
     const scrollTop = list.scrollTop;
+    // Same reasoning, one level deeper: a note you've resized (the corner-
+    // drag handle) has its own independent scrollable content area
+    // (.note-content-body), separate from the outer list's scroll above --
+    // rebuilding the list recreates that element fresh too, resetting IT
+    // back to the top independently, which is exactly what kept happening
+    // even after the outer list itself stopped jumping.
+    const contentScrollTops = {};
+    list.querySelectorAll('.note-card').forEach(card => {
+      const cb = card.querySelector('.note-content-body');
+      if (cb) contentScrollTops[card.dataset.id] = cb.scrollTop;
+    });
     list.innerHTML = '';
 
     if (!notes.length) {
@@ -552,6 +563,16 @@ const Todo = {
 
       card.appendChild(inner);
       list.appendChild(card);
+    });
+
+    // Only now, after every card is actually attached to the live document
+    // -- a detached element has no layout box yet, so setting scrollTop on
+    // contentBody any earlier (e.g. right after building it, before it's
+    // in the DOM) silently clamps to 0 instead of taking effect.
+    list.querySelectorAll('.note-card').forEach(card => {
+      const savedScroll = contentScrollTops[card.dataset.id];
+      const cb = card.querySelector('.note-content-body');
+      if (cb && savedScroll != null) cb.scrollTop = savedScroll;
     });
 
     // Restore focus first, then re-assert scroll position last -- focusing

@@ -470,42 +470,46 @@ const Todo = {
           }
 
           if (newItem) {
-            // rowEl and input are left COMPLETELY untouched -- not moved,
-            // not removed, not replaced. Testing showed that even moving a
-            // focused input to a new (already-connected) parent still
-            // blurs it in practice, the same as removing it outright, so
-            // there's no DOM operation on the input itself that survives
-            // with focus intact. Instead, a fresh static row for the OLD
-            // (just-committed) item is inserted right before this one, and
-            // this exact row is simply repointed at the NEW item in place:
-            // its id, checkbox binding (if any), and input value change,
-            // but its position, parent, and connectedness never do, so
-            // there's nothing left that could trigger a blur.
-            const staticOldRow = buildItemRow(itemObj);
-            rowEl.insertAdjacentElement('beforebegin', staticOldRow);
-            rowEl.dataset.id = newItem.id;
-            rowEl.classList.remove('checked');
-            if (hasCheckbox) {
-              const oldCheckBtn = rowEl.querySelector('.note-check');
-              const freshCheckBtn = document.createElement('button');
-              freshCheckBtn.type = 'button';
-              freshCheckBtn.className = 'note-check';
-              freshCheckBtn.style.cssText = 'background:none;border:none;padding:0;display:flex;color:inherit;';
-              freshCheckBtn.setAttribute('aria-label', 'Toggle done');
-              freshCheckBtn.innerHTML = icon('square');
-              freshCheckBtn.addEventListener('click', () => {
-                newItem.checked = !newItem.checked;
-                Store.updateNote(note.id, { items: note.items });
-                Todo.render();
-              });
-              oldCheckBtn.replaceWith(freshCheckBtn);
-            }
+            // Only the input's own value and listeners change synchronously
+            // here -- its parent (rowEl) and siblings are left completely
+            // alone in this same tick. Testing ruled out moving, removing,
+            // or replacing the input itself as the cause (none of those
+            // touch it directly here either), which points at something
+            // more surprising: mutating rowEl itself or its other children
+            // (a new sibling row, a replaced checkbox button) in the same
+            // synchronous pass as the keydown appears to be enough on its
+            // own to make iOS reconsider the keyboard, even without ever
+            // touching the focused element. Deferring that restructuring by
+            // one frame -- after the keydown has fully resolved -- is the
+            // next thing to try.
             input.value = '';
             openItemEditor(rowEl, newItem, input);
+            requestAnimationFrame(() => {
+              const staticOldRow = buildItemRow(itemObj);
+              rowEl.insertAdjacentElement('beforebegin', staticOldRow);
+              rowEl.dataset.id = newItem.id;
+              rowEl.classList.remove('checked');
+              if (hasCheckbox) {
+                const oldCheckBtn = rowEl.querySelector('.note-check');
+                const freshCheckBtn = document.createElement('button');
+                freshCheckBtn.type = 'button';
+                freshCheckBtn.className = 'note-check';
+                freshCheckBtn.style.cssText = 'background:none;border:none;padding:0;display:flex;color:inherit;';
+                freshCheckBtn.setAttribute('aria-label', 'Toggle done');
+                freshCheckBtn.innerHTML = icon('square');
+                freshCheckBtn.addEventListener('click', () => {
+                  newItem.checked = !newItem.checked;
+                  Store.updateNote(note.id, { items: note.items });
+                  Todo.render();
+                });
+                oldCheckBtn.replaceWith(freshCheckBtn);
+              }
+              renumber();
+            });
           } else {
             rowEl.replaceWith(buildItemRow(itemObj));
+            renumber();
           }
-          renumber();
         }
         const blurHandler = () => commit(false);
         const keydownHandler = e => {

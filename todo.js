@@ -529,12 +529,17 @@ const Todo = {
           const textEl = rowEl.querySelector('.note-item-text');
           if (textEl) textEl.replaceWith(input);
           else rowEl.appendChild(input);
-          input.focus();
-          input.select();
         }
-        // When reusing, input is already exactly where it needs to be
-        // inside rowEl -- nothing to insert, move, or refocus, which is
-        // the whole point (see this function's call site for why).
+        // Called every time, reuse included -- this turned out to be the
+        // actual missing piece. DOM focus was never really the problem
+        // (the input was confirmed to still be document.activeElement
+        // throughout), but iOS Safari's on-screen KEYBOARD only reappears
+        // in response to an explicit, synchronous focus() call; it doesn't
+        // reliably follow along just because the element was already
+        // focused. Calling it here, unconditionally, inside the same
+        // keydown handler that triggered all this, is what re-summons it.
+        input.focus();
+        if (!reuseInput) input.select();
       }
 
       // Defensive cleanup: a properly committed empty edit always deletes

@@ -353,7 +353,14 @@ const Todo = {
         if (!isNumberedList) return;
         Array.from(itemsContainer.children).forEach((rowEl, i) => {
           const numEl = rowEl.querySelector('.note-number');
-          if (numEl) numEl.textContent = `${i + 1}.`;
+          if (!numEl) return;
+          // Skip rows whose number is already correct -- setting
+          // textContent always replaces the text node even when the value
+          // is unchanged, so touching every row on every insert/delete
+          // (instead of just the ones that actually shifted) was visibly
+          // flashing the whole list on lists with many items.
+          const target = `${i + 1}.`;
+          if (numEl.textContent !== target) numEl.textContent = target;
         });
       }
 
@@ -518,6 +525,18 @@ const Todo = {
         // When reusing, input is already exactly where it needs to be
         // inside rowEl -- nothing to insert, move, or refocus, which is
         // the whole point (see this function's call site for why).
+      }
+
+      // Defensive cleanup: a properly committed empty edit always deletes
+      // itself (see commit() above), so anything still sitting empty here
+      // means its own commit() never got to run -- an interrupted blur/
+      // focus sequence, say. Rather than leaving a permanently-stuck blank
+      // row that only a click-back-in-and-press-Enter can clear, anything
+      // empty gets swept up the moment this note next renders for any
+      // reason, unless it's the one actively being typed into right now.
+      if ((note.items || []).some(i => !i.text && i.id !== Todo.pendingEditItemId)) {
+        note.items = note.items.filter(i => i.text || i.id === Todo.pendingEditItemId);
+        Store.updateNote(note.id, { items: note.items });
       }
 
       const items = (note.items || []).filter(it => showChecked || !it.checked);

@@ -410,6 +410,12 @@ const Todo = {
           if (input._keydownHandler) input.removeEventListener('keydown', input._keydownHandler);
         }
         input.type = 'text';
+        // Tells the OS keyboard this Return key means "move to another
+        // field", not "done" -- a plain text input defaults to "done",
+        // which carries an implicit dismiss-the-keyboard action on iOS that
+        // preventDefault() on keydown doesn't reliably suppress, since it's
+        // tied to the key's own semantic hint, not just the DOM event.
+        input.setAttribute('enterkeyhint', 'next');
         input.value = itemObj.text;
         // 16px, not the row's 13px -- iOS Safari auto-zooms the whole page
         // when a focused input is smaller than 16px. The "Add item" input
@@ -563,7 +569,7 @@ const Todo = {
       const addRow = document.createElement('div');
       addRow.className = 'note-add-item';
       const isAddExpanded = Todo.expandedAddFor === note.id;
-      addRow.innerHTML = `<button type="button" class="note-add-btn" style="color:${textColor};opacity:0.55;background:none;border:none;padding:0;display:flex;">${icon('plus')}</button><input type="text" placeholder="Add item" style="color:${textColor}"${isAddExpanded ? '' : ' class="hidden"'}>`;
+      addRow.innerHTML = `<button type="button" class="note-add-btn" style="color:${textColor};opacity:0.55;background:none;border:none;padding:0;display:flex;">${icon('plus')}</button><input type="text" placeholder="Add item" enterkeyhint="next" style="color:${textColor}"${isAddExpanded ? '' : ' class="hidden"'}>`;
       const addInput = addRow.querySelector('input');
       const addBtn = addRow.querySelector('.note-add-btn');
 

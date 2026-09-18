@@ -413,21 +413,25 @@ const Todo = {
             Store.updateNote(note.id, { items: note.items });
 
             const insertAfterNode = row.nextSibling;
-            if (wasDeleted) row.remove();
-            else row.replaceWith(buildItemRow(it));
 
+            // Focus the new item FIRST, while this row's input is still
+            // attached and focused -- moving focus straight from one live
+            // input to another is a clean handoff. Removing/replacing this
+            // row before that (the old order) drops focus to nothing for a
+            // moment, and iOS Safari can take that as its cue to dismiss the
+            // keyboard even though a new input grabs focus synchronously
+            // right after -- by the time it does, the keyboard's already on
+            // its way down. Synchronous, not deferred, for the same reason
+            // noted below: a setTimeout leaves a window where the focus can
+            // silently fail to stick at all.
             if (newItem) {
-              // Synchronous, not deferred -- unlike the "Add item" row's own
-              // Return-key race (re-focusing the SAME input right as iOS
-              // tries to dismiss its keyboard), this moves focus to a
-              // DIFFERENT, brand-new input, which doesn't fight iOS the same
-              // way. Deferring this via setTimeout was actually the bug:
-              // it left a window where the click/focus could silently fail
-              // to stick, requiring an extra manual tap into the new row.
               const newRow = buildItemRow(newItem);
               itemsContainer.insertBefore(newRow, insertAfterNode);
               newRow.querySelector('.note-item-text').click();
             }
+
+            if (wasDeleted) row.remove();
+            else row.replaceWith(buildItemRow(it));
           }
           input.addEventListener('blur', () => commit(false));
           input.addEventListener('keydown', e => {

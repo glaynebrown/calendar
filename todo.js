@@ -30,10 +30,11 @@ const NOTE_OTHER_TYPES = [
   { type: 'note', label: 'Memories', placeholder: 'What made today memorable?' },
   { type: 'moodboard', label: 'Mood Board' },
   { type: 'mood', label: 'Mood Tracker' },
+  { type: 'numbered', label: 'Numbered List' },
   { type: 'photos', label: 'Photo Board' },
   { type: 'checklist', label: 'Priorities' },
 ];
-const NOTE_TYPE_LABELS = { mood: 'Mood Tracker', habits: 'Habit Tracker', photos: 'Photo Board', moodboard: 'Mood Board', drawing: 'Drawing/iPad', note: 'Note', checklist: 'To-do List', bullets: 'Bulleted List' };
+const NOTE_TYPE_LABELS = { mood: 'Mood Tracker', habits: 'Habit Tracker', photos: 'Photo Board', moodboard: 'Mood Board', drawing: 'Drawing/iPad', note: 'Note', checklist: 'To-do List', bullets: 'Bulleted List', numbered: 'Numbered List' };
 
 /* Generic pointer-based drag-to-reorder. Attach once to a container; children
    marked .sortable-item (with a .drag-handle inside) become reorderable. */
@@ -276,6 +277,7 @@ const Todo = {
         else if (note.type === 'habits') (note.habitDefs || []).forEach(h => lines.push(`${(note.habitChecks || {})[h.id] ? '[x]' : '[ ]'} ${h.text}`));
         else if (note.type === 'mood') { if (note.moodValue) lines.push(note.moodValue.replace('mood-', '').replace('-', ' ')); }
         else if (note.type === 'bullets') (note.items || []).forEach(it => lines.push(`• ${it.text}`));
+        else if (note.type === 'numbered') (note.items || []).forEach((it, i) => lines.push(`${i + 1}. ${it.text}`));
         else if (!['photos', 'moodboard', 'drawing'].includes(note.type)) (note.items || []).forEach(it => lines.push(`${it.checked ? '[x]' : '[ ]'} ${it.text}`));
         const text = lines.join('\n');
         if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -335,25 +337,46 @@ const Todo = {
 
       const itemsContainer = document.createElement('div');
       itemsContainer.className = 'note-items';
-      // A bulleted list is the same item shape/storage as a to-do list --
-      // just a plain marker instead of a checkbox, and no "done" state to
-      // toggle (matches the to-do list's own text size too, since it's
-      // literally the same .note-item/.note-item-text rendering).
+      // Bulleted and numbered lists are the same item shape/storage as a
+      // to-do list -- just a plain marker instead of a checkbox, and no
+      // "done" state to toggle (matches the to-do list's own text size too,
+      // since it's literally the same .note-item/.note-item-text rendering).
       const isBulletList = note.type === 'bullets';
+      const isNumberedList = note.type === 'numbered';
+      const hasCheckbox = !isBulletList && !isNumberedList;
 
-      function buildItemRow(it) {
+      // Fixes up every row's displayed number after an in-place insert or
+      // delete, without touching anything else (focus, scroll, other
+      // rows' identity) -- a full Todo.render() here would defeat the
+      // whole point of editing the DOM in place for exactly that reason.
+      function renumber() {
+        if (!isNumberedList) return;
+        Array.from(itemsContainer.children).forEach((rowEl, i) => {
+          const numEl = rowEl.querySelector('.note-number');
+          if (numEl) numEl.textContent = `${i + 1}.`;
+        });
+      }
+
+      // displayIndex (0-based) is only ever a starting guess for a numbered
+      // list -- renumber() below is what keeps every row's number correct
+      // after an insert or delete shifts everything after it, without
+      // needing a full re-render (see commit()'s own reasoning for why a
+      // full Todo.render() mid-edit is avoided).
+      function buildItemRow(it, displayIndex) {
         const row = document.createElement('div');
-        row.className = 'note-item sortable-item' + (!isBulletList && it.checked ? ' checked' : '');
+        row.className = 'note-item sortable-item' + (hasCheckbox && it.checked ? ' checked' : '');
         row.dataset.id = it.id;
         row.style.color = textColor;
         const marker = isBulletList
           ? `<span class="note-bullet" style="color:${textColor};opacity:0.55;">•</span>`
+          : isNumberedList
+          ? `<span class="note-number" style="color:${textColor};opacity:0.55;">${(displayIndex || 0) + 1}.</span>`
           : `<button type="button" class="note-check" style="background:none;border:none;padding:0;display:flex;color:inherit;" aria-label="Toggle done">${icon(it.checked ? 'check-square' : 'square')}</button>`;
         row.innerHTML = `<button type="button" class="drag-handle" style="color:${textColor};opacity:0.55;" aria-label="Reorder item">${icon('grip')}</button>
           ${marker}
           <span class="note-item-text">${escapeHTML(it.text)}</span>`;
 
-        if (!isBulletList) {
+        if (hasCheckbox) {
           row.querySelector('.note-check').addEventListener('click', () => {
             it.checked = !it.checked;
             Store.updateNote(note.id, { items: note.items });
@@ -439,6 +462,7 @@ const Todo = {
 
             if (wasDeleted) row.remove();
             else row.replaceWith(buildItemRow(it));
+            renumber();
           }
           input.addEventListener('blur', () => commit(false));
           input.addEventListener('keydown', e => {
@@ -460,8 +484,8 @@ const Todo = {
       }
 
       const items = (note.items || []).filter(it => showChecked || !it.checked);
-      items.forEach(it => {
-        const row = buildItemRow(it);
+      items.forEach((it, i) => {
+        const row = buildItemRow(it, i);
         itemsContainer.appendChild(row);
         // Re-opens a just-inserted item's edit mode if a live-sync echo
         // re-render landed before the user got to type into it -- see
@@ -512,7 +536,7 @@ const Todo = {
         const newItem = { id: uid(), text, checked: false };
         note.items.push(newItem);
         Store.updateNote(note.id, { items: note.items });
-        itemsContainer.appendChild(buildItemRow(newItem));
+        itemsContainer.appendChild(buildItemRow(newItem, note.items.length - 1));
         addInput.value = '';
         // As the note grows taller item by item, keep the input you're
         // actively typing into in view instead of letting the note just

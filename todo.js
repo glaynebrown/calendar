@@ -381,8 +381,10 @@ const Todo = {
               // off is no longer the only way to remove one.
               note.items = (note.items || []).filter(i => i.id !== it.id);
             }
+            // An empty item just deletes, full stop -- it never also spawns
+            // a new blank one, since there's nothing there to "split".
             let newItem = null;
-            if (insertNext) {
+            if (insertNext && !wasDeleted) {
               newItem = { id: uid(), text: '', checked: false };
               const idx = (note.items || []).findIndex(i => i.id === it.id);
               if (idx >= 0) note.items.splice(idx + 1, 0, newItem);
@@ -396,15 +398,16 @@ const Todo = {
             else row.replaceWith(buildItemRow(it));
 
             if (newItem) {
-              // Same iOS Return-key/keyboard-dismiss race as the "Add item"
-              // row below -- deferring lets iOS's own dismiss handling run
-              // first, so focusing the new item right after doesn't lose
-              // that race and get closed again immediately.
-              setTimeout(() => {
-                const newRow = buildItemRow(newItem);
-                itemsContainer.insertBefore(newRow, insertAfterNode);
-                if (Todo.pendingEditItemId === newItem.id) newRow.querySelector('.note-item-text').click();
-              }, 0);
+              // Synchronous, not deferred -- unlike the "Add item" row's own
+              // Return-key race (re-focusing the SAME input right as iOS
+              // tries to dismiss its keyboard), this moves focus to a
+              // DIFFERENT, brand-new input, which doesn't fight iOS the same
+              // way. Deferring this via setTimeout was actually the bug:
+              // it left a window where the click/focus could silently fail
+              // to stick, requiring an extra manual tap into the new row.
+              const newRow = buildItemRow(newItem);
+              itemsContainer.insertBefore(newRow, insertAfterNode);
+              newRow.querySelector('.note-item-text').click();
             }
           }
           input.addEventListener('blur', () => commit(false));

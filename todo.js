@@ -362,7 +362,14 @@ const Todo = {
         }
 
         const textEl = row.querySelector('.note-item-text');
-        textEl.addEventListener('click', () => {
+        // Named and called directly (not just wired to the click listener)
+        // so the "insert next item" flow below can open this row's editor
+        // straight from within the Enter keydown that triggered it, instead
+        // of going through a synthetic .click() dispatch -- iOS Safari
+        // appears to treat a focus() reached via a fabricated click event as
+        // less "trusted" than one called directly inside the real keydown
+        // handler's own call stack, even though both are synchronous.
+        function openEditor() {
           const input = document.createElement('input');
           input.type = 'text';
           input.value = it.text;
@@ -427,7 +434,7 @@ const Todo = {
             if (newItem) {
               const newRow = buildItemRow(newItem);
               itemsContainer.insertBefore(newRow, insertAfterNode);
-              newRow.querySelector('.note-item-text').click();
+              newRow._openEditor();
             }
 
             if (wasDeleted) row.remove();
@@ -445,7 +452,9 @@ const Todo = {
           textEl.replaceWith(input);
           input.focus();
           input.select();
-        });
+        }
+        textEl.addEventListener('click', openEditor);
+        row._openEditor = openEditor;
 
         return row;
       }
@@ -457,7 +466,7 @@ const Todo = {
         // Re-opens a just-inserted item's edit mode if a live-sync echo
         // re-render landed before the user got to type into it -- see
         // Todo.pendingEditItemId's own comment.
-        if (Todo.pendingEditItemId === it.id) row.querySelector('.note-item-text').click();
+        if (Todo.pendingEditItemId === it.id) row._openEditor();
       });
       contentBody.appendChild(itemsContainer);
       makeSortable(itemsContainer, orderedIds => {

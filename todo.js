@@ -157,6 +157,14 @@ const Todo = {
 
     const notes = this.getVisibleNotes(userId);
     const list = document.getElementById('notes-list');
+    // Clearing/rebuilding the list resets its own scroll position to the
+    // top -- harmless for a render you triggered yourself right after
+    // scrolling somewhere on purpose, but a live-sync echo re-render (e.g.
+    // right after Store.updateNote while adding items to a list further
+    // down the page) fires on its own timing and would otherwise yank the
+    // whole list back to the top out from under you, even though focus
+    // itself is separately preserved below.
+    const scrollTop = list.scrollTop;
     list.innerHTML = '';
 
     if (!notes.length) {
@@ -546,7 +554,12 @@ const Todo = {
       list.appendChild(card);
     });
 
+    // Restore focus first, then re-assert scroll position last -- focusing
+    // a freshly rebuilt input can itself trigger the browser's own
+    // scroll-into-view, so setting scrollTop after that (not before) is
+    // what makes the restored position actually stick.
     this._restoreFocus(focusInfo);
+    list.scrollTop = scrollTop;
   },
 
   // Only the "add item" input, deliberately -- item-text editing commits on

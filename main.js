@@ -147,9 +147,20 @@ const App = {
       // it's what corrects the brief cold-load fallback (see getTheme's own
       // comment) to the real synced value the moment it arrives, and what
       // makes a theme change on another device show up live here too.
+      // applyTheme's background call only knows the plain global theme, not
+      // any month-specific override -- Calendar.render() immediately
+      // corrects that for its own tab (every one of its render paths
+      // re-applies the right month's background right after), which is why
+      // this was invisible there, but Todo.render() has no background logic
+      // of its own, so a month override (e.g. a custom September photo)
+      // would otherwise get silently wiped the moment any data changed
+      // while sitting on the Notes tab, with nothing to put it back.
       applyTheme(Store.getTheme());
       if (this.activeTab === 'calendar-tab') Calendar.render();
-      else Todo.render();
+      else {
+        applyBackgroundForMonth(Calendar.getRelevantMonthIndex());
+        Todo.render();
+      }
     });
     // Accounts created before the reminders feature existed don't have a
     // timezone field yet (it's only set at signup) -- self-heals here so

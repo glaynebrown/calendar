@@ -409,6 +409,8 @@ const Calendar = {
     // change your default birthday color later, every birthday that was
     // never individually customized picks up the new default automatically.
     const defaultColor = Store.getDefaultBirthdayColor(userId) || HOLIDAY_COLOR;
+    const bdIcon = Store.getBirthdayIcon(userId);
+    const iconPrefix = bdIcon ? `${bdIcon} ` : '';
     return peopleIds
       .flatMap(ownerId => Store.getBirthdays(ownerId).map(b => ({ ...b, ownerId })))
       .filter(b => b.month === m && b.day === d)
@@ -433,7 +435,7 @@ const Calendar = {
         category: null,
         time: null,
         date: dateStr,
-        title: b.year ? `🎂 ${b.name}'s ${ordinal(y - b.year)} Birthday` : `🎂 ${b.name}'s Birthday`,
+        title: b.year ? `${iconPrefix}${b.name}'s ${ordinal(y - b.year)} Birthday` : `${iconPrefix}${b.name}'s Birthday`,
       }));
   },
 
@@ -2939,6 +2941,14 @@ const Calendar = {
       <div class="field-row" style="align-items:center; margin-bottom:14px;">
         <input type="color" id="bd-default-color" class="color-box" value="${Store.getDefaultBirthdayColor(userId) || HOLIDAY_COLOR}">
         <span class="muted">Default birthday color</span>
+        <button type="button" class="btn" id="bd-icon-btn" style="margin-left:auto; flex:0 0 auto; padding:4px 12px; font-size:20px; line-height:1.2;" aria-label="Choose birthday icon"></button>
+      </div>
+      <div id="bd-icon-panel" class="hidden" style="margin:-4px 0 14px;">
+        <div class="sticker-book-grid" id="bd-icon-grid"></div>
+        <div class="sticker-add-row">
+          <input type="text" id="bd-icon-custom" maxlength="8" placeholder="Or type any emoji">
+          <button type="button" class="btn" id="bd-icon-custom-add">Set</button>
+        </div>
       </div>
       <div id="bd-list"></div>
       <div id="bd-form-wrap"></div>
@@ -2958,6 +2968,54 @@ const Calendar = {
         renderSharedList();
         Calendar.render();
       });
+
+      // Icon picker: a personal emoji shown in front of every birthday on
+      // your calendar. '' (the "None" chip) means no icon at all.
+      const BIRTHDAY_ICON_PRESETS = ['🎂', '🎈', '⭐', '🎉', '🎁', '🥳', '🎊', '🍰', '🧁', '🎀', '💖', '🌟', '🌸', '👑', '🍾', ''];
+      const iconBtn = root.querySelector('#bd-icon-btn');
+      const iconPanel = root.querySelector('#bd-icon-panel');
+      const iconGrid = root.querySelector('#bd-icon-grid');
+      const iconCustom = root.querySelector('#bd-icon-custom');
+      function refreshIconBtn() {
+        const cur = Store.getBirthdayIcon(userId);
+        iconBtn.textContent = cur || '∅';
+      }
+      function setIcon(val) {
+        Store.saveBirthdayIcon(userId, val);
+        refreshIconBtn();
+        renderIconGrid();
+        Calendar.render();
+      }
+      function renderIconGrid() {
+        const cur = Store.getBirthdayIcon(userId);
+        iconGrid.innerHTML = '';
+        BIRTHDAY_ICON_PRESETS.forEach(em => {
+          const wrap = document.createElement('div');
+          wrap.className = 'sticker-chip-wrap';
+          const chip = document.createElement('button');
+          chip.type = 'button';
+          chip.className = 'sticker-chip';
+          chip.textContent = em || 'None';
+          if (!em) chip.style.fontSize = '12px';
+          if (em === cur) chip.style.borderColor = 'var(--accent)';
+          chip.addEventListener('click', () => setIcon(em));
+          wrap.appendChild(chip);
+          iconGrid.appendChild(wrap);
+        });
+      }
+      refreshIconBtn();
+      iconBtn.addEventListener('click', () => {
+        iconPanel.classList.toggle('hidden');
+        if (!iconPanel.classList.contains('hidden')) renderIconGrid();
+      });
+      function commitCustomIcon() {
+        const val = iconCustom.value.trim();
+        if (!val) return;
+        iconCustom.value = '';
+        setIcon(val);
+      }
+      root.querySelector('#bd-icon-custom-add').addEventListener('click', commitCustomIcon);
+      iconCustom.addEventListener('keydown', e => { if (e.key === 'Enter') commitCustomIcon(); });
 
       function closeForm() {
         formWrap.innerHTML = '';

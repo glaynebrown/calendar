@@ -1494,6 +1494,20 @@ const Store = {
     localStorage.setItem(`fc_defaultBirthdayColor_${userId}`, color);
     this._syncPref(userId, 'defaultBirthdayColor', color);
   },
+  // The emoji shown in front of every birthday's title on YOUR calendar --
+  // a personal display preference like the default color, never affecting
+  // what anyone else sees. '' means "no icon at all" (distinct from unset,
+  // which falls back to the cake).
+  getBirthdayIcon(userId) {
+    const synced = this._pref('birthdayIcon');
+    if (synced !== undefined) return synced;
+    const local = localStorage.getItem(`fc_birthdayIcon_${userId}`);
+    return local === null ? '🎂' : local;
+  },
+  saveBirthdayIcon(userId, iconEmoji) {
+    localStorage.setItem(`fc_birthdayIcon_${userId}`, iconEmoji);
+    this._syncPref(userId, 'birthdayIcon', iconEmoji);
+  },
 
   // One-time: seeds this ACCOUNT's Firestore-synced appearance preferences
   // from whatever this device already has saved locally, the first time any

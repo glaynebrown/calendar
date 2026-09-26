@@ -3462,6 +3462,12 @@ const Calendar = {
       root.querySelector('#ev-close').addEventListener('click', closeModal);
 
       let dateVal = baseDate;
+      // For a repeating event this field shows the SERIES' start date, not
+      // the occurrence you tapped -- so "just this one"/"this and future"
+      // saves need to know whether it was actually changed (see the save
+      // handler), or they'd wrongly drag the edited occurrence back to the
+      // series' first date.
+      let dateTouched = false;
       let throughVal = event && event.endDate && event.endDate !== baseDate ? event.endDate : null;
       const dateBtn = root.querySelector('#ev-date-btn');
       const timeField = root.querySelector('#ev-time-field');
@@ -3480,6 +3486,7 @@ const Calendar = {
         openDatePicker(dateVal, throughVal, (start, end) => {
           dateVal = start;
           throughVal = end;
+          dateTouched = true;
           updateDateBtnLabel();
           refreshTimeFieldsVisibility();
         });
@@ -3997,52 +4004,173 @@ const Calendar = {
         const notes = root.querySelector('#ev-notes').value.trim() || null;
         const location = root.querySelector('#ev-location').value.trim() || null;
         const endDate = (throughVal && throughVal > date) ? throughVal : null;
-        const eventId = event ? event.id : uid();
-        // Custom color is local to this viewer (see Store.eventColorFor),
-        // not a field on the shared event document.
-        Store.setEventColor(userId, eventId, colorVal);
-        let newEvent = {
-          id: eventId,
-          title, date, endDate, time, endTime, ownerId, participantIds, category, visibility, customPeople,
-          notes, location, attachment: attachmentVal,
-          order: event ? event.order : defaultEventOrder(time),
-          exceptions: event ? (event.exceptions || []) : [],
-          // Pointer back to the originating birthday record (see
-          // birthdayHolidayStub) so the gift-ideas note -- which lives only in
-          // that local birthday record, never here -- can still be found on
-          // later edits. addEvent overwrites the whole document, so this must
-          // be carried forward explicitly or it's silently dropped on first save.
-          birthdayId: event ? (event.birthdayId || null) : null,
-        };
-        // Reminders already saved live via setMyReminder as they're changed
-        // (see above) -- only set the initial map here for a brand-new event,
-        // where there's no risk yet of clobbering anyone else's setting.
-        if (!isEdit) newEvent.reminders = reminderVal != null ? { [userId]: reminderVal } : {};
-
-        if (repeatVal === 'single') {
-          newEvent.type = 'single';
-          newEvent.recurrence = null;
-        } else if (repeatVal === 'custom') {
-          newEvent.type = 'custom';
-          newEvent.dates = Array.from(new Set([date, ...customDatesVal]));
-          newEvent.recurrence = null;
-        } else {
-          newEvent.type = 'recurring';
+        // The repeat settings as currently set in the editor, anchored to
+        // `anchor` (the event's start date). minDate, when given, drops any
+        // custom dates before it -- used when only the "future" half of a
+        // series is being split off into its own event.
+        const repeatFields = (anchor, minDate) => {
+          if (repeatVal === 'single') return { type: 'single', recurrence: null };
+          if (repeatVal === 'custom') {
+            const dates = Array.from(new Set([anchor, ...customDatesVal.filter(d => !minDate || d >= minDate)])).sort();
+            return { type: 'custom', dates, recurrence: null };
+          }
           const freq = repeatVal === 'custom-interval' ? intervalUnit.value : repeatVal;
           const interval = repeatVal === 'custom-interval' ? Math.max(1, parseInt(intervalN.value, 10) || 1) : 1;
           const rule = { freq, interval, until: null, count: null };
           if (endsType.value === 'on' && endsDateVal) rule.until = endsDateVal;
           if (endsType.value === 'after' && endsCount.value) rule.count = parseInt(endsCount.value, 10);
-          newEvent.recurrence = rule;
-        }
+          return { type: 'recurring', recurrence: rule };
+        };
 
-        if (isEdit) Store.updateEvent(event.id, newEvent);
-        else Store.addEvent(newEvent);
+        // Whole event (or a brand-new one) -- the original behavior.
+        const saveAll = () => {
+          const eventId = event ? event.id : uid();
+          // Custom color is local to this viewer (see Store.eventColorFor),
+          // not a field on the shared event document.
+          Store.setEventColor(userId, eventId, colorVal);
+          let newEvent = {
+            id: eventId,
+            title, date, endDate, time, endTime, ownerId, participantIds, category, visibility, customPeople,
+            notes, location, attachment: attachmentVal,
+            order: event ? event.order : defaultEventOrder(time),
+            exceptions: event ? (event.exceptions || []) : [],
+            // Pointer back to the originating birthday record (see
+            // birthdayHolidayStub) so the gift-ideas note -- which lives only in
+            // that local birthday record, never here -- can still be found on
+            // later edits. addEvent overwrites the whole document, so this must
+            // be carried forward explicitly or it's silently dropped on first save.
+            birthdayId: event ? (event.birthdayId || null) : null,
+          };
+          // Reminders already saved live via setMyReminder as they're changed
+          // (see above) -- only set the initial map here for a brand-new event,
+          // where there's no risk yet of clobbering anyone else's setting.
+          if (!isEdit) newEvent.reminders = reminderVal != null ? { [userId]: reminderVal } : {};
 
-        closeModal();
-        Calendar.render();
+          Object.assign(newEvent, repeatFields(date));
+
+          if (isEdit) Store.updateEvent(event.id, newEvent);
+          else Store.addEvent(newEvent);
+
+          closeModal();
+          Calendar.render();
+        };
+
+        // Editing ONE occurrence of a repeating event: 'one' pulls just that
+        // occurrence out of the series into its own standalone event, and
+        // 'future' ends the series just before it and starts a new one from
+        // it. Either way the original series keeps everything before (and,
+        // for 'one', after) untouched.
+        const saveScoped = scope => {
+          const fresh = Store.getEvents().find(e => e.id === event.id) || event;
+          const newId = uid();
+          // Where the split-off event lands: the occurrence you tapped, unless
+          // you deliberately picked a different date in the editor (its date
+          // field shows the series' START date, so an untouched one must NOT
+          // be used here). A multi-day event keeps its original length.
+          const spanDays = fresh.endDate ? Math.round((parseISO(fresh.endDate) - parseISO(fresh.date)) / 86400000) : 0;
+          const newDate = dateTouched ? date : dateStr;
+          const newEnd = dateTouched ? endDate : (spanDays > 0 ? formatISO(addToDate(parseISO(dateStr), 'daily', spanDays)) : null);
+          Store.setEventColor(userId, newId, colorVal);
+          const newEvent = {
+            id: newId,
+            title, date: newDate, endDate: newEnd, time, endTime, ownerId, participantIds, category, visibility, customPeople,
+            notes, location, attachment: attachmentVal,
+            order: eventOrderForDate(fresh, dateStr),
+            exceptions: [],
+            // Copied from the live event (setMyReminder writes straight to it
+            // as reminders are picked) so everyone's existing reminders carry
+            // over to the split-off event too.
+            reminders: { ...(fresh.reminders || {}) },
+            birthdayId: null,
+          };
+
+          if (scope === 'one') {
+            newEvent.type = 'single';
+            newEvent.recurrence = null;
+            if (fresh.type === 'custom') {
+              const remaining = (fresh.dates || []).filter(d => d !== dateStr);
+              if (remaining.length) Store.updateEvent(fresh.id, { dates: remaining });
+              else Store.deleteEvent(fresh.id);
+            } else {
+              Store.updateEvent(fresh.id, { exceptions: [...(fresh.exceptions || []), dateStr] });
+            }
+          } else {
+            Object.assign(newEvent, repeatFields(newDate, fresh.type === 'custom' ? dateStr : null));
+            if (fresh.type === 'custom') {
+              const past = (fresh.dates || []).filter(d => d < dateStr);
+              if (past.length) Store.updateEvent(fresh.id, { dates: past });
+              else Store.deleteEvent(fresh.id);
+            } else {
+              const orig = fresh.recurrence;
+              // A count ("ends after N") is a total for the whole series, so
+              // the new half only gets whatever's left after the occurrences
+              // already used up before the split -- unless you changed it here.
+              const rule = newEvent.recurrence;
+              if (newEvent.type === 'recurring' && rule.count && orig.count === rule.count
+                  && (orig.freq === rule.freq) && ((orig.interval || 1) === (rule.interval || 1))) {
+                let before = 0;
+                let cur = parseISO(fresh.date);
+                const stop = parseISO(dateStr);
+                while (cur < stop && before < 3000) {
+                  before++;
+                  cur = addToDate(cur, orig.freq, orig.interval || 1);
+                }
+                rule.count = Math.max(1, rule.count - before);
+              }
+              if (!dateTouched) newEvent.exceptions = (fresh.exceptions || []).filter(d => d > dateStr);
+              // The day before the tapped occurrence is always past the last
+              // earlier one, no matter how the series steps (weekly, monthly...).
+              const dayBefore = formatISO(addToDate(parseISO(dateStr), 'daily', -1));
+              Store.updateEvent(fresh.id, { recurrence: { ...orig, until: dayBefore, count: null } });
+            }
+          }
+          Store.addEvent(newEvent);
+
+          closeModal();
+          Calendar.render();
+        };
+
+        const canScope = isEdit && (event.type === 'recurring' || event.type === 'custom') && dateStr
+          && expandOccurrences(event, dateStr, dateStr).includes(dateStr);
+        if (!canScope) { saveAll(); return; }
+        const firstOccurrence = event.type === 'custom'
+          ? [...(event.dates || [])].sort()[0] === dateStr
+          : dateStr <= event.date;
+        Calendar.openEditScopeModal(!firstOccurrence, scope => (scope === 'all' ? saveAll() : saveScoped(scope)));
       });
     });
+  },
+
+  // Layered ON TOP of the open editor (appended to #modal-root, not swapped
+  // in via openModal) so backing out leaves the editor and everything typed
+  // into it exactly as it was.
+  openEditScopeModal(showFuture, onChoose) {
+    const root = document.getElementById('modal-root');
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-backdrop';
+    overlay.id = 'scope-backdrop';
+    overlay.style.zIndex = '70';
+    overlay.innerHTML = `
+      <div class="modal-sheet">
+        <div class="modal-header"><h2>Edit repeating event</h2><button class="modal-close" id="sc-close">${icon('x')}</button></div>
+        <p class="muted">This event repeats. Apply your changes to:</p>
+        <div class="btn-row" style="flex-direction:column;">
+          <button class="btn" id="sc-one">Just this one</button>
+          ${showFuture ? '<button class="btn" id="sc-future">This and future</button>' : ''}
+          <button class="btn btn-primary" id="sc-all">All events</button>
+        </div>
+      </div>
+    `;
+    root.appendChild(overlay);
+    applyIcons(overlay);
+    const dismiss = () => overlay.remove();
+    overlay.addEventListener('click', e => { if (e.target === overlay) dismiss(); });
+    overlay.querySelector('#sc-close').addEventListener('click', dismiss);
+    const choose = scope => { dismiss(); onChoose(scope); };
+    overlay.querySelector('#sc-one').addEventListener('click', () => choose('one'));
+    const futureBtn = overlay.querySelector('#sc-future');
+    if (futureBtn) futureBtn.addEventListener('click', () => choose('future'));
+    overlay.querySelector('#sc-all').addEventListener('click', () => choose('all'));
   },
 
   openDeleteChoiceModal(event, occurrenceDate) {

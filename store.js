@@ -68,6 +68,16 @@ function connectionDocId(a, b) {
   return a < b ? `${a}_${b}` : `${b}_${a}`;
 }
 
+// hasReminders is a denormalized flag so the reminders cron
+// (scripts/send-reminders.js) can query just the events it cares about --
+// Firestore has no "this map is non-empty" query, and reading every event
+// every run blew through the free plan's 50K reads/day. Clients only ever
+// need to get "true" right: a stale true is harmless (the cron clears it),
+// a stale false would silently drop reminders.
+function hasAnyReminders(reminders) {
+  return !!reminders && Object.keys(reminders).length > 0;
+}
+
 // visibleTo is a denormalized array of every uid allowed to read an event --
 // Firestore security rules can only validate a *live* collection query (as
 // opposed to a single-doc get) against conditions the query itself proves,
@@ -692,7 +702,7 @@ const Store = {
     const id = event.id || uid();
     const participantIds = event.participantIds || [event.ownerId];
     const visibleTo = computeVisibleTo(event.ownerId, participantIds, event.visibility, event.customPeople);
-    const full = { ...event, id, participantIds, visibleTo };
+    const full = { ...event, id, participantIds, visibleTo, hasReminders: hasAnyReminders(event.reminders) };
     _cache.events.push(full);
     firebase.firestore().collection('events').doc(id).set(full);
   },
@@ -704,6 +714,7 @@ const Store = {
       const participantIds = merged.participantIds || [merged.ownerId];
       merged.visibleTo = computeVisibleTo(merged.ownerId, participantIds, merged.visibility, merged.customPeople);
     }
+    merged.hasReminders = hasAnyReminders(merged.reminders);
     _cache.events[idx] = merged;
     firebase.firestore().collection('events').doc(id).set(merged);
   },
@@ -722,11 +733,15 @@ const Store = {
       const reminders = { ..._cache.events[idx].reminders };
       if (minutes == null) delete reminders[userId];
       else reminders[userId] = minutes;
-      _cache.events[idx] = { ..._cache.events[idx], reminders };
+      _cache.events[idx] = { ..._cache.events[idx], reminders, ...(minutes == null ? {} : { hasReminders: true }) };
     }
     const field = `reminders.${userId}`;
-    firebase.firestore().collection('events').doc(eventId)
-      .update({ [field]: minutes == null ? firebase.firestore.FieldValue.delete() : minutes });
+    // Removing never clears hasReminders here -- this device can't know
+    // whether someone else just added theirs. The cron clears stale flags.
+    const update = minutes == null
+      ? { [field]: firebase.firestore.FieldValue.delete() }
+      : { [field]: minutes, hasReminders: true };
+    firebase.firestore().collection('events').doc(eventId).update(update);
   },
   // Per-occurrence display order within one specific day, independent of
   // every other day this event might occur on -- a recurring event's

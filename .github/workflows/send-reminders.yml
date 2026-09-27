@@ -4,10 +4,21 @@ on:
   schedule:
     - cron: '*/5 * * * *'
   workflow_dispatch:
+    inputs:
+      backfill:
+        description: 'One-time: set hasReminders on every event (reads all events once)'
+        type: boolean
+        default: false
+
+# If GitHub bunches runs up, let one finish instead of stacking them.
+concurrency:
+  group: send-reminders
+  cancel-in-progress: false
 
 jobs:
   send-reminders:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -15,9 +26,11 @@ jobs:
           node-version: '20'
       - name: Install dependencies
         working-directory: scripts
-        run: npm install
+        # Retry once -- the npm registry occasionally hiccups.
+        run: npm install || (sleep 15 && npm install)
       - name: Send due reminders
         working-directory: scripts
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          BACKFILL: ${{ inputs.backfill }}
         run: node send-reminders.js

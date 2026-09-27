@@ -97,7 +97,44 @@ function formatReminderBody(event, occDate) {
   return `${occDate} at ${h12}:${pad2(mm)} ${period}`;
 }
 
+// Retries a few times on Firestore's transient errors (UNAVAILABLE,
+// DEADLINE_EXCEEDED, etc) so a brief blip on Google's side doesn't fail the
+// whole run and send a failure email.
+async function withRetry(fn, tries = 3) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (attempt >= tries) throw err;
+      console.warn(`Attempt ${attempt} failed (${err.message}), retrying...`);
+      await new Promise(r => setTimeout(r, 2000 * attempt));
+    }
+  }
+}
+
+// One-time (or occasional) repair: sets hasReminders on every event from its
+// actual reminders map. Run from the Actions tab via "Run workflow" with
+// backfill checked. Reads every event once, so don't run it on a schedule.
+async function backfill() {
+  const snap = await withRetry(() => db.collection('events').get());
+  let batch = db.batch();
+  let pending = 0;
+  let changed = 0;
+  for (const doc of snap.docs) {
+    const reminders = doc.get('reminders') || {};
+    const want = Object.keys(reminders).length > 0;
+    if (doc.get('hasReminders') === want) continue;
+    batch.update(doc.ref, { hasReminders: want });
+    changed++;
+    if (++pending === 400) { await batch.commit(); batch = db.batch(); pending = 0; }
+  }
+  if (pending > 0) await batch.commit();
+  console.log(`Backfill done. ${snap.size} event(s) checked, ${changed} updated.`);
+}
+
 async function main() {
+  if (process.env.BACKFILL === 'true') return backfill();
+
   const now = new Date();
   // Much wider than the 5-minute cron interval, on purpose -- observed in
   // practice (via the Actions run history), GitHub does not run this every
@@ -108,58 +145,86 @@ async function main() {
   // window needs to comfortably outlast the longest gap actually seen
   // between runs, not the configured interval.
   const windowStart = new Date(now.getTime() - 180 * 60 * 1000);
-  const todayStr = formatISO(now);
+  // Occurrence dates are wall-clock dates in the owner's timezone, but this
+  // runner is on UTC -- after ~8 PM Eastern, UTC's "today" is already
+  // tomorrow. Starting a day early keeps this evening's events in range;
+  // the dueAt window below still decides what actually sends.
+  const rangeStartStr = formatISO(new Date(now.getTime() - 24 * 60 * 60 * 1000));
   const lookaheadEnd = formatISO(new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000));
 
-  const [eventsSnap, accountsSnap] = await Promise.all([
-    db.collection('events').get(),
-    db.collection('accounts').get(),
-  ]);
-  const accounts = new Map(accountsSnap.docs.map(d => [d.id, d.data()]));
+  // Only events someone has a reminder on (see hasAnyReminders in store.js)
+  // -- reading every event and account each run is what used up the free
+  // plan's daily read quota.
+  const eventsSnap = await withRetry(() =>
+    db.collection('events').where('hasReminders', '==', true).get());
+
+  const neededUids = new Set();
+  for (const doc of eventsSnap.docs) {
+    const data = doc.data();
+    if (data.ownerId) neededUids.add(data.ownerId);
+    Object.keys(data.reminders || {}).forEach(uid => neededUids.add(uid));
+  }
+  const accountRefs = [...neededUids].map(uid => db.collection('accounts').doc(uid));
+  const accountSnaps = accountRefs.length ? await withRetry(() => db.getAll(...accountRefs)) : [];
+  const accounts = new Map(accountSnaps.filter(s => s.exists).map(s => [s.id, s.data()]));
 
   let sentCount = 0;
+  let errorCount = 0;
 
   for (const doc of eventsSnap.docs) {
-    const event = { id: doc.id, ...doc.data() };
-    const reminders = event.reminders || {};
-    const uids = Object.keys(reminders);
-    if (uids.length === 0) continue;
-
-    const owner = accounts.get(event.ownerId);
-    if (!owner) continue;
-    const timezone = owner.timezone || 'America/New_York';
-
-    const occurrences = expandOccurrences(event, todayStr, lookaheadEnd);
-    for (const occDate of occurrences) {
-      const eventInstant = zonedTimeToUtc(occDate, event.time, timezone);
-
-      for (const uid of uids) {
-        const minutesBefore = reminders[uid];
-        const dueAt = new Date(eventInstant.getTime() - minutesBefore * 60 * 1000);
-        if (dueAt < windowStart || dueAt > now) continue;
-
-        const sentKey = `${occDate}_${uid}`;
-        if (event.sentReminders && event.sentReminders[sentKey]) continue;
-
-        const recipient = accounts.get(uid);
-        const tokens = (recipient && recipient.deviceTokens) || [];
-        if (tokens.length > 0) {
-          const title = event.title || 'Reminder';
-          const body = formatReminderBody(event, occDate);
-          await Promise.all(tokens.map(token =>
-            messaging.send({ token, notification: { title, body } }).catch(err => {
-              console.warn(`Failed to send to a token for ${uid}:`, err.message);
-            })
-          ));
-          sentCount++;
-          console.log(`Sent reminder for "${event.title}" (${occDate}) to ${uid}`);
-        }
-        await doc.ref.update({ [`sentReminders.${sentKey}`]: true });
+    // One bad or just-deleted event shouldn't fail the whole run -- anything
+    // not marked sent here simply gets picked up again next run.
+    try {
+      const event = { id: doc.id, ...doc.data() };
+      const reminders = event.reminders || {};
+      const uids = Object.keys(reminders);
+      if (uids.length === 0) {
+        // Stale flag (the app never clears it itself). The precondition
+        // skips this if someone added a reminder since we read the doc.
+        await doc.ref.update({ hasReminders: false }, { lastUpdateTime: doc.updateTime })
+          .catch(() => {});
+        continue;
       }
+
+      const owner = accounts.get(event.ownerId);
+      if (!owner) continue;
+      const timezone = owner.timezone || 'America/New_York';
+
+      const occurrences = expandOccurrences(event, rangeStartStr, lookaheadEnd);
+      for (const occDate of occurrences) {
+        const eventInstant = zonedTimeToUtc(occDate, event.time, timezone);
+
+        for (const uid of uids) {
+          const minutesBefore = reminders[uid];
+          const dueAt = new Date(eventInstant.getTime() - minutesBefore * 60 * 1000);
+          if (dueAt < windowStart || dueAt > now) continue;
+
+          const sentKey = `${occDate}_${uid}`;
+          if (event.sentReminders && event.sentReminders[sentKey]) continue;
+
+          const recipient = accounts.get(uid);
+          const tokens = (recipient && recipient.deviceTokens) || [];
+          if (tokens.length > 0) {
+            const title = event.title || 'Reminder';
+            const body = formatReminderBody(event, occDate);
+            await Promise.all(tokens.map(token =>
+              messaging.send({ token, notification: { title, body } }).catch(err => {
+                console.warn(`Failed to send to a token for ${uid}:`, err.message);
+              })
+            ));
+            sentCount++;
+            console.log(`Sent reminder for "${event.title}" (${occDate}) to ${uid}`);
+          }
+          await doc.ref.update({ [`sentReminders.${sentKey}`]: true });
+        }
+      }
+    } catch (err) {
+      errorCount++;
+      console.warn(`Skipped event ${doc.id}:`, err.message);
     }
   }
 
-  console.log(`Done. ${sentCount} notification(s) sent.`);
+  console.log(`Done. ${eventsSnap.size} event(s) with reminders checked, ${sentCount} notification(s) sent, ${errorCount} skipped.`);
 }
 
 main().then(() => process.exit(0)).catch(err => {

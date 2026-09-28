@@ -281,12 +281,12 @@ const Calendar = {
 
   init() {
     this.viewMode = Store.getDefaultCalendarView(Store.getCurrentUserId());
-    document.getElementById('prev-month').addEventListener('click', () => this.shiftPeriod(-1));
-    document.getElementById('next-month').addEventListener('click', () => this.shiftPeriod(1));
-    document.getElementById('hamburger-btn').addEventListener('click', () => this.toggleViewMenu());
-    document.getElementById('viewmode-btn').addEventListener('click', () => this.toggleViewModeMenu());
-    document.getElementById('search-btn').addEventListener('click', () => this.toggleSearchPanel());
-    document.getElementById('month-label').addEventListener('click', () => this.openMonthThemeModal());
+    onTap(document.getElementById('prev-month'), () => this.shiftPeriod(-1));
+    onTap(document.getElementById('next-month'), () => this.shiftPeriod(1));
+    onTap(document.getElementById('hamburger-btn'), () => this.toggleViewMenu());
+    onTap(document.getElementById('viewmode-btn'), () => this.toggleViewModeMenu());
+    onTap(document.getElementById('search-btn'), () => this.toggleSearchPanel());
+    onTap(document.getElementById('month-label'), () => this.openMonthThemeModal());
 
     document.addEventListener('click', e => {
       const menu = document.getElementById('view-menu');

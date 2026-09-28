@@ -8,6 +8,31 @@ function openModal(bodyHTML, wireFn) {
   if (wireFn) wireFn(root);
 }
 
+// Tap handler for the top-bar buttons. iPhone Safari sometimes turns a
+// tap into just a "hover" (button highlights, nothing opens, second tap
+// works) -- it does that whenever anything on the page changes at the
+// moment of the tap, e.g. a live data sync re-drawing the calendar. Acting
+// on the finger lifting (and cancelling Safari's own delayed click) avoids
+// that entirely; mouse and keyboard still go through the normal click.
+function onTap(el, fn) {
+  let start = null;
+  el.addEventListener('touchstart', e => {
+    const t = e.touches[0];
+    start = e.touches.length === 1 ? { x: t.clientX, y: t.clientY } : null;
+  }, { passive: true });
+  el.addEventListener('touchend', e => {
+    if (!start) return;
+    const t = e.changedTouches[0];
+    const moved = Math.abs(t.clientX - start.x) > 10 || Math.abs(t.clientY - start.y) > 10;
+    start = null;
+    if (moved) return;
+    e.preventDefault(); // no follow-up click, so it can't fire twice
+    fn(e);
+  }, { passive: false });
+  el.addEventListener('touchcancel', () => { start = null; });
+  el.addEventListener('click', fn);
+}
+
 function closeModal() {
   document.getElementById('modal-root').innerHTML = '';
 }
@@ -65,10 +90,10 @@ const App = {
     }
 
     document.querySelectorAll('.bottom-tab').forEach(btn => {
-      btn.addEventListener('click', () => this.switchTab(btn.dataset.tab));
+      onTap(btn, () => this.switchTab(btn.dataset.tab));
     });
 
-    document.getElementById('fab').addEventListener('click', () => {
+    onTap(document.getElementById('fab'), () => {
       if (this.activeTab === 'calendar-tab') {
         Calendar.openEventModal(null, formatISO(new Date()));
       } else {

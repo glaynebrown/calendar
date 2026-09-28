@@ -142,6 +142,12 @@ input, select, textarea {
   color: var(--text-secondary); border-radius: 8px;
 }
 .icon-btn:hover { background: var(--surface-2); color: var(--text); }
+/* On touch screens a tapped button "sticks" in its hover look; only real
+   mouse/trackpad devices get the hover highlight. */
+@media (hover: none) {
+  .icon-btn:hover, .month-label:hover { background: none; }
+  .icon-btn:hover { color: var(--text-secondary); }
+}
 .icon-btn svg { width: 20px; height: 20px; }
 .month-nav { display: flex; align-items: center; gap: 4px; justify-self: center; }
 .month-label {
@@ -520,10 +526,12 @@ html.has-text-override .bottom-tab.active {
 }
 /* White text picks a dark hover background instead of the usual light
    var(--surface-2) — otherwise a white icon vanishes against it on hover. */
-html.text-white .icon-btn:hover,
-html.text-white .month-label:hover {
-  background: rgba(0,0,0,0.35);
-  color: var(--text-override);
+@media (hover: hover) {
+  html.text-white .icon-btn:hover,
+  html.text-white .month-label:hover {
+    background: rgba(0,0,0,0.35);
+    color: var(--text-override);
+  }
 }
 .day-cell {
   background: transparent;

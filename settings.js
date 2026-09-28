@@ -294,8 +294,8 @@ function applyTheme(theme) {
 
 const Settings = {
   init() {
-    document.getElementById('settings-btn').addEventListener('click', () => this.openModal());
-    document.getElementById('todo-settings-btn').addEventListener('click', () => this.openModal());
+    onTap(document.getElementById('settings-btn'), () => this.openModal());
+    onTap(document.getElementById('todo-settings-btn'), () => this.openModal());
   },
 
   openModal() {

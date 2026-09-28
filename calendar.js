@@ -3362,7 +3362,6 @@ const Calendar = {
     openModal(body, root => {
       root.querySelector('#dn-close').addEventListener('click', closeModal);
       const textInput = root.querySelector('#dn-text');
-      if (!isEdit) textInput.focus();
 
       const dateBtn = root.querySelector('#dn-date-btn');
       const refreshDateBtn = () => {

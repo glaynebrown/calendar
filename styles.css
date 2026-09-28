@@ -549,7 +549,7 @@ html.text-white .month-label:hover {
 /* Date notes ("Mom flies home") -- same size and spot as an event, but
    italic with no color so they never read as an event. */
 .event-chip.date-note-chip { font-style: italic; font-weight: 400; color: var(--text); background: none; cursor: pointer; }
-.week-event-row.date-note-row { font-style: italic; font-weight: 400; background: none; border-left-color: transparent; padding-top: 2px; padding-bottom: 2px; }
+.week-event-row.date-note-row { font-style: italic; font-weight: 400; color: var(--text); background: none; border-left-color: transparent; padding-top: 2px; padding-bottom: 2px; }
 .week-event-row.date-note-row.day-event-row, .week-event-row.date-note-row.day-view-note { padding-top: 6px; padding-bottom: 6px; }
 .week-event-row.date-note-row:hover { background: var(--border); }
 .week-event-row.date-note-row .week-event-time { font-style: normal; }

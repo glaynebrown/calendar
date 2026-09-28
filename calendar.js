@@ -351,6 +351,47 @@ const Calendar = {
       });
       menu.appendChild(btn);
     });
+    const divider = document.createElement('div');
+    divider.className = 'menu-divider';
+    menu.appendChild(divider);
+    const userId = Store.getCurrentUserId();
+    const toggle = document.createElement('label');
+    toggle.className = 'menu-item checklist-item';
+    toggle.innerHTML = `<input type="checkbox" ${Store.getShowDateNotes(userId) ? 'checked' : ''}><span>Show date notes</span>`;
+    toggle.querySelector('input').addEventListener('change', e => {
+      Store.setShowDateNotes(userId, e.target.checked);
+      menu.classList.add('hidden');
+      this.render();
+    });
+    menu.appendChild(toggle);
+  },
+
+  // Date notes visible on this date, or none at all when switched off in
+  // the view menu -- every view goes through this so the switch is total.
+  dateNotesForDate(dateStr) {
+    const userId = Store.getCurrentUserId();
+    return Store.getShowDateNotes(userId) ? Store.getDateNotesForDate(dateStr) : [];
+  },
+
+  // List-style row (week, day, planner, day popup) -- same shape as an
+  // event row, but italic with no color so it never reads as an event.
+  makeDateNoteRow(note, dateStr, extraClass) {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'week-event-row date-note-row' + (extraClass ? ' ' + extraClass : '');
+    const span = note.endDate && note.endDate !== note.date ? formatDateRangeShort(note.date, note.endDate) : '';
+    row.innerHTML = `
+      <div class="week-event-main">
+        <span class="week-event-title">${escapeHTML(note.text)}</span>
+        ${span ? `<span class="week-event-time">${escapeHTML(span)}</span>` : ''}
+      </div>
+    `;
+    row.addEventListener('click', e => {
+      e.stopPropagation();
+      closeModal();
+      this.openDateNoteModal(note, dateStr);
+    });
+    return row;
   },
 
   setViewMode(mode) {
@@ -1237,7 +1278,9 @@ const Calendar = {
       const list = document.createElement('div');
       list.className = 'week-day-events';
       const dayEvents = this.getEventsForDate(ds, peopleIds, categories, categoryFilter);
-      if (!dayEvents.length) {
+      const dayNotes = this.dateNotesForDate(ds);
+      dayNotes.forEach(note => list.appendChild(this.makeDateNoteRow(note, ds)));
+      if (!dayEvents.length && !dayNotes.length) {
         const empty = document.createElement('p');
         empty.className = 'muted week-day-empty';
         empty.textContent = 'No events';
@@ -1315,7 +1358,9 @@ const Calendar = {
     const dayEvents = this.getEventsForDate(ds, peopleIds, categories, categoryFilter);
     const list = document.createElement('div');
     list.className = 'week-day-events day-view-events';
-    if (!dayEvents.length) {
+    const dayNotes = this.dateNotesForDate(ds);
+    dayNotes.forEach(note => list.appendChild(this.makeDateNoteRow(note, ds, 'day-event-row')));
+    if (!dayEvents.length && !dayNotes.length) {
       const empty = document.createElement('p');
       empty.className = 'muted week-day-empty';
       empty.textContent = 'No events';
@@ -1990,10 +2035,12 @@ const Calendar = {
   renderPlannerEventsWidget(body, dateStr, userId) {
     const { peopleIds, categories, categoryFilter } = Store.getActiveFilter(userId);
     const events = this.getEventsForDate(dateStr, peopleIds, categories, categoryFilter);
-    if (!events.length) {
+    const notes = this.dateNotesForDate(dateStr);
+    if (!events.length && !notes.length) {
       body.innerHTML = '<p class="muted planner-empty">No events today.</p>';
       return;
     }
+    notes.forEach(note => body.appendChild(this.makeDateNoteRow(note, dateStr)));
     events.forEach(ev => {
       const color = this.colorForEvent(ev, userId);
       const row = document.createElement('button');
@@ -2751,6 +2798,17 @@ const Calendar = {
       // available space; see grid-auto-rows:1fr in styles.css). The
       // fitDayCellChips pass below trims each cell down to what its own
       // geometry actually allows, once that's measurable.
+      const dayNotes = this.dateNotesForDate(ds);
+      dayNotes.forEach(note => {
+        const chip = document.createElement('div');
+        chip.className = 'event-chip date-note-chip';
+        chip.textContent = note.text;
+        chip.addEventListener('click', e => {
+          e.stopPropagation();
+          this.openDateNoteModal(note, ds);
+        });
+        cell.appendChild(chip);
+      });
       const dayEvents = (dateMap[ds] || []).slice().sort(compareEventOrder(ds));
       dayEvents.forEach(ev => {
         const chip = document.createElement('div');
@@ -2765,7 +2823,7 @@ const Calendar = {
         cell.appendChild(chip);
       });
 
-      const hasAnyEvents = dayEvents.length > 0 || multiDayEvents.some(ev => ev.date <= ds && ev.endDate >= ds);
+      const hasAnyEvents = dayEvents.length > 0 || dayNotes.length > 0 || multiDayEvents.some(ev => ev.date <= ds && ev.endDate >= ds);
       cell.addEventListener('click', () => {
         if (hasAnyEvents) this.openDayView(ds);
         else this.openEventModal(null, ds);
@@ -2861,17 +2919,24 @@ const Calendar = {
     const { peopleIds, categories, categoryFilter } = Store.getActiveFilter(userId);
 
     const dayEvents = this.getEventsForDate(dateStr, peopleIds, categories, categoryFilter);
+    const dayNotes = this.dateNotesForDate(dateStr);
 
     const dateLabel = parseISO(dateStr).toLocaleDateString('default', { weekday: 'long', month: 'long', day: 'numeric' });
 
     const body = `
       <div class="modal-header"><h2>${dateLabel}</h2><button class="modal-close" id="dv-close">${icon('x')}</button></div>
+      <div id="dv-notes"></div>
       <div id="dv-list"></div>
-      <button type="button" class="btn btn-primary" id="dv-add" style="width:100%;margin-top:12px;display:flex;align-items:center;justify-content:center;gap:6px;">${icon('plus')}<span>Add event</span></button>
+      <div style="display:flex;gap:8px;margin-top:12px;">
+        <button type="button" class="btn btn-primary" id="dv-add" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;">${icon('plus')}<span>Add event</span></button>
+        <button type="button" class="btn" id="dv-add-note" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;">${icon('plus')}<span>Add note</span></button>
+      </div>
     `;
 
     openModal(body, root => {
       root.querySelector('#dv-close').addEventListener('click', closeModal);
+      const notesEl = root.querySelector('#dv-notes');
+      dayNotes.forEach(note => notesEl.appendChild(this.makeDateNoteRow(note, dateStr, 'day-view-note')));
       const listEl = root.querySelector('#dv-list');
       if (!dayEvents.length) {
         listEl.innerHTML = '<p class="muted">No events yet.</p>';
@@ -2922,6 +2987,10 @@ const Calendar = {
       root.querySelector('#dv-add').addEventListener('click', () => {
         closeModal();
         this.openEventModal(null, dateStr);
+      });
+      root.querySelector('#dv-add-note').addEventListener('click', () => {
+        closeModal();
+        this.openDateNoteModal(null, dateStr);
       });
     });
   },
@@ -3180,6 +3249,104 @@ const Calendar = {
   // for recurring/custom events), forwarded to openEventModal unchanged so
   // editing lands on the same occurrence-aware behavior as before this view
   // existed.
+  // Add/edit a date note. Deliberately much smaller than the event form:
+  // just the text, a date or span, and who can see it. Anyone it's shared
+  // with can change any of that or delete it (see Store.updateDateNote).
+  openDateNoteModal(note, dateStr) {
+    const userId = Store.getCurrentUserId();
+    const isEdit = !!(note && Store.getDateNotes().some(n => n.id === note.id));
+    // Everyone you can see, plus anyone already on this note even if
+    // they're not one of YOUR connections (e.g. someone the note's author
+    // shared it with) -- so re-saving never silently drops them.
+    const people = Store.getKnownPeople(userId).filter(p => p.id !== userId);
+    if (note) (note.visibleTo || []).forEach(id => {
+      if (id !== userId && !people.some(p => p.id === id)) {
+        const person = Store.getAccount(id);
+        if (person) people.push(person);
+      }
+    });
+    // New notes default to your household(s); change it per note.
+    const householdIds = new Set();
+    Store.getHouseholdsFor(userId).forEach(h => h.memberIds.forEach(id => householdIds.add(id)));
+    const initialShared = note ? (note.visibleTo || []) : [...householdIds];
+    let dateVal = note ? note.date : dateStr;
+    let throughVal = note && note.endDate && note.endDate !== note.date ? note.endDate : null;
+
+    const body = `
+      <div class="modal-header"><h2>${isEdit ? 'Edit date note' : 'Add date note'}</h2><button class="modal-close" id="dn-close">${icon('x')}</button></div>
+      <div class="field">
+        <input type="text" id="dn-text" placeholder="e.g. Mom flies home" autocomplete="off" maxlength="80" value="${note ? escapeAttr(note.text) : ''}">
+      </div>
+      <div class="field">
+        <button type="button" class="time-field-btn" id="dn-date-btn">${icon('calendar')}<span class="tf-text"></span></button>
+      </div>
+      <div class="field" id="dn-share-field">
+        <label>Who can see this</label>
+        <button type="button" class="time-field-btn" id="dn-share-btn">${icon('users')}<span class="tf-text"></span></button>
+        <div id="dn-share-menu" class="repeat-menu hidden">
+          ${people.length
+            ? people.map(p => `<label class="menu-item checklist-item"><input type="checkbox" value="${p.id}" ${initialShared.includes(p.id) ? 'checked' : ''}><span>${escapeHTML(p.name)}</span></label>`).join('')
+            : '<p class="muted" style="padding:6px 10px;">No one to share with yet.</p>'}
+        </div>
+      </div>
+      <div class="btn-row">
+        ${isEdit ? `<button class="btn btn-danger" id="dn-delete">Delete</button>` : ''}
+        <button class="btn btn-primary" id="dn-save">Save</button>
+      </div>
+    `;
+
+    openModal(body, root => {
+      root.querySelector('#dn-close').addEventListener('click', closeModal);
+      const textInput = root.querySelector('#dn-text');
+      if (!isEdit) textInput.focus();
+
+      const dateBtn = root.querySelector('#dn-date-btn');
+      const refreshDateBtn = () => {
+        dateBtn.querySelector('.tf-text').textContent = throughVal ? formatDateRangeShort(dateVal, throughVal) : formatDateShort(dateVal);
+      };
+      refreshDateBtn();
+      dateBtn.addEventListener('click', () => {
+        openDatePicker(dateVal, throughVal, (start, end) => {
+          dateVal = start;
+          throughVal = end && end > start ? end : null;
+          refreshDateBtn();
+        });
+      });
+
+      const shareBtn = root.querySelector('#dn-share-btn');
+      const shareMenu = root.querySelector('#dn-share-menu');
+      const checkedIds = () => Array.from(shareMenu.querySelectorAll('input:checked')).map(cb => cb.value);
+      const refreshShareBtn = () => {
+        const names = people.filter(p => checkedIds().includes(p.id)).map(p => p.name);
+        shareBtn.querySelector('.tf-text').textContent = names.length ? `You, ${names.join(', ')}` : 'Just you';
+      };
+      refreshShareBtn();
+      shareBtn.addEventListener('click', () => shareMenu.classList.toggle('hidden'));
+      shareMenu.querySelectorAll('input').forEach(cb => cb.addEventListener('change', refreshShareBtn));
+
+      root.querySelector('#dn-save').addEventListener('click', () => {
+        const text = textInput.value.trim();
+        if (!text) { textInput.focus(); return; }
+        const fields = { text, date: dateVal, endDate: throughVal, visibleTo: [userId, ...checkedIds()] };
+        if (isEdit) Store.updateDateNote(note.id, fields);
+        else Store.addDateNote(fields);
+        // Adding one while notes are switched off would look like it
+        // vanished -- turn them back on so you can see what you just added.
+        if (!Store.getShowDateNotes(userId)) Store.setShowDateNotes(userId, true);
+        closeModal();
+        this.render();
+      });
+
+      const deleteBtn = root.querySelector('#dn-delete');
+      if (deleteBtn) deleteBtn.addEventListener('click', () => {
+        if (!confirm('Delete this date note for everyone it\'s shared with?')) return;
+        Store.deleteDateNote(note.id);
+        closeModal();
+        this.render();
+      });
+    });
+  },
+
   openEventDetailModal(event, dateStr) {
     const userId = Store.getCurrentUserId();
     const color = this.colorForEvent(event, userId);
@@ -3316,7 +3483,7 @@ const Calendar = {
         <input type="text" id="ev-title" placeholder="Title" autocomplete="off" value="${event ? escapeAttr(event.title) : ''}">
         <div id="ev-title-suggestions" class="title-suggestions hidden"></div>
       </div>
-      <div class="checkbox-row"><button type="button" class="link-btn" id="ev-save-preset">Save as preset</button></div>
+      <div class="checkbox-row"><button type="button" class="link-btn" id="ev-save-preset">Save as preset</button>${isEdit || event ? '' : `<button type="button" class="link-btn" id="ev-as-note" style="margin-left:auto;">Add a date note instead</button>`}</div>
       <div class="field-row">
         <div class="field"><button type="button" class="time-field-btn" id="ev-date-btn">${icon('calendar')}<span class="tf-text">${event && event.endDate && event.endDate !== baseDate ? formatDateRangeShort(baseDate, event.endDate) : formatDateShort(baseDate)}</span></button></div>
         <div class="field" id="ev-repeat-field">
@@ -3460,6 +3627,11 @@ const Calendar = {
 
     openModal(body, root => {
       root.querySelector('#ev-close').addEventListener('click', closeModal);
+      const asNoteBtn = root.querySelector('#ev-as-note');
+      if (asNoteBtn) asNoteBtn.addEventListener('click', () => {
+        closeModal();
+        this.openDateNoteModal(null, dateStr);
+      });
 
       let dateVal = baseDate;
       // For a repeating event this field shows the SERIES' start date, not

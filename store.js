@@ -55,6 +55,7 @@ const _cache = {
   preferences: {}, // the CURRENT signed-in user's own synced appearance settings (private)
   birthdays: [],      // own birthdays plus any shared with the current user (see the `visibleTo` note below)
   birthdayNotes: [],  // the CURRENT signed-in user's own private gift-idea notes only (private)
+  dateNotes: [],      // short calendar labels ("Mom flies home") -- own plus any shared with the current user
   monthThemes: {}, monthThemesReady: false,               // own per-month background overrides, one Firestore doc each (private)
   plannerMonthThemes: {}, plannerMonthThemesReady: false,  // same, for the planner's own override tier (private)
 };
@@ -165,7 +166,7 @@ const Store = {
   startSync(userId) {
     this.stopSync();
     const db = firebase.firestore();
-    const pending = new Set(['accounts', 'connections-a', 'connections-b', 'households', 'events', 'categories', 'views', 'editTrust', 'notes', 'preferences', 'birthdays', 'birthdayNotes', 'monthThemes', 'plannerMonthThemes']);
+    const pending = new Set(['accounts', 'connections-a', 'connections-b', 'households', 'events', 'categories', 'views', 'editTrust', 'notes', 'preferences', 'birthdays', 'birthdayNotes', 'dateNotes', 'monthThemes', 'plannerMonthThemes']);
     let resolveReady;
     const ready = new Promise(res => { resolveReady = res; });
     const settle = key => {
@@ -303,6 +304,20 @@ const Store = {
       }
     ));
 
+    // Date notes -- short labels on the calendar that aren't events (see
+    // getDateNotesForDate). Same visibleTo pattern and same settle-on-error
+    // as notes above, so a rules-deploy gap can't hang the app.
+    _unsubscribers.push(db.collection('dateNotes').where('visibleTo', 'array-contains', userId).onSnapshot(
+      snap => {
+        _cache.dateNotes = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        settle('dateNotes'); notify();
+      },
+      err => {
+        console.warn('Date notes sync failed:', err.code);
+        settle('dateNotes'); notify();
+      }
+    ));
+
     // Each month's background lives in its OWN document (see the comment
     // on getMonthThemes/setMonthTheme for why) -- this listens to the
     // whole subcollection at once and rebuilds the keyed-by-month-index
@@ -347,7 +362,7 @@ const Store = {
     _cache.accounts = []; _cache.connections = []; _cache.households = [];
     _cache.events = []; _cache.categories = []; _cache.views = []; _cache.editTrust = [];
     _cache.notes = []; _cache.preferences = {};
-    _cache.birthdays = []; _cache.birthdayNotes = [];
+    _cache.birthdays = []; _cache.birthdayNotes = []; _cache.dateNotes = [];
     _cache.monthThemes = {}; _cache.monthThemesReady = false;
     _cache.plannerMonthThemes = {}; _cache.plannerMonthThemesReady = false;
   },
@@ -979,6 +994,17 @@ const Store = {
     localStorage.setItem(`fc_showEventColors_${userId}`, val ? '1' : '0');
     this._syncPref(userId, 'showEventColors', !!val);
   },
+  // Whether date notes show on the calendar at all -- the on/off switch in
+  // the Month/Week/Day view menu. Per-viewer, on by default.
+  getShowDateNotes(userId) {
+    const synced = this._pref('showDateNotes');
+    if (synced !== undefined) return synced;
+    return localStorage.getItem(`fc_showDateNotes_${userId}`) !== '0';
+  },
+  setShowDateNotes(userId, val) {
+    localStorage.setItem(`fc_showDateNotes_${userId}`, val ? '1' : '0');
+    this._syncPref(userId, 'showDateNotes', !!val);
+  },
   // Month view only (day chips + multi-day bars): whether the event's own
   // color tints both box and text ('colored', the default), or the box
   // goes solid with fixed white/black text instead. Per-viewer like every
@@ -1253,6 +1279,41 @@ const Store = {
     const ref = firebase.firestore().collection('preferences').doc(this.getCurrentUserId()).collection('plannerMonthThemes').doc(String(monthIndex));
     const write = theme ? ref.set(theme) : ref.delete();
     write.catch(err => console.warn('Planner month theme save failed:', err.code));
+  },
+
+  // ---- date notes: short labels on one date or a span of dates ("Grandma
+  // visiting"), deliberately NOT events -- no time, color, category or
+  // reminders, and completely separate from the Notes tab's lists.
+  // visibleTo is just the explicit list of people it's shared with (always
+  // including whoever saves it); anyone on that list can edit, re-share or
+  // delete it, same as events. ----
+  getDateNotes() {
+    return _cache.dateNotes;
+  },
+  getDateNotesForDate(dateStr) {
+    return _cache.dateNotes
+      .filter(n => n.date <= dateStr && (n.endDate || n.date) >= dateStr)
+      .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : (a.text || '').localeCompare(b.text || '')));
+  },
+  addDateNote(note) {
+    const id = note.id || uid();
+    const me = this.getCurrentUserId();
+    const visibleTo = Array.from(new Set([me, ...(note.visibleTo || [])]));
+    const full = { text: note.text, date: note.date, endDate: note.endDate || null, ownerId: me, visibleTo, id };
+    _cache.dateNotes.push(full);
+    firebase.firestore().collection('dateNotes').doc(id).set(full);
+  },
+  updateDateNote(id, patch) {
+    const idx = _cache.dateNotes.findIndex(n => n.id === id);
+    if (idx < 0) return;
+    const merged = { ..._cache.dateNotes[idx], ...patch };
+    merged.visibleTo = Array.from(new Set([this.getCurrentUserId(), ...(merged.visibleTo || [])]));
+    _cache.dateNotes[idx] = merged;
+    firebase.firestore().collection('dateNotes').doc(id).set(merged);
+  },
+  deleteDateNote(id) {
+    _cache.dateNotes = _cache.dateNotes.filter(n => n.id !== id);
+    firebase.firestore().collection('dateNotes').doc(id).delete();
   },
 
   // ---- todos/notes: synced via Firestore (like events), not localStorage,

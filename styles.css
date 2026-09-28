@@ -546,6 +546,14 @@ html.text-white .month-label:hover {
   white-space: nowrap; overflow: hidden; text-overflow: clip; flex-shrink: 0;
 }
 .event-more { font-size: 9px; color: var(--text-muted); padding: 0 1px; flex-shrink: 0; }
+/* Date notes ("Mom flies home") -- same size and spot as an event, but
+   italic with no color so they never read as an event. */
+.event-chip.date-note-chip { font-style: italic; font-weight: 400; color: var(--text); background: none; cursor: pointer; }
+.week-event-row.date-note-row { font-style: italic; font-weight: 400; background: none; border-left-color: transparent; padding-top: 2px; padding-bottom: 2px; }
+.week-event-row.date-note-row.day-event-row, .week-event-row.date-note-row.day-view-note { padding-top: 6px; padding-bottom: 6px; }
+.week-event-row.date-note-row:hover { background: var(--border); }
+.week-event-row.date-note-row .week-event-time { font-style: normal; }
+.day-view-note { margin-bottom: 6px; }
 .multiday-bar {
   position: absolute; height: 15px; font-size: 10px; font-weight: 500;
   display: flex; align-items: center; padding: 0 4px;
@@ -854,7 +862,7 @@ input[type="color"]::-moz-color-swatch { border: none; border-radius: inherit; }
 
 /* Repeat + Ends, consolidated into one field column no wider than its sibling */
 .repeat-field-row { display: flex; gap: 8px; align-items: flex-start; }
-#ev-repeat-field, #ev-reminder-field, #ev-owner-field, #ev-category-field { position: relative; }
+#ev-repeat-field, #ev-reminder-field, #ev-owner-field, #ev-category-field, #dn-share-field { position: relative; }
 #ev-repeat-field .time-field-btn { flex: 1; width: auto; }
 #ev-repeat-field .time-field-btn.icon-only { flex: 0 0 36px; }
 #ev-repeat-field select { flex: 1; width: auto; font-size: 13px; padding: 9px 6px; }

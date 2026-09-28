@@ -553,7 +553,17 @@ html.text-white .month-label:hover {
 .week-event-row.date-note-row.day-event-row, .week-event-row.date-note-row.day-view-note { padding-top: 6px; padding-bottom: 6px; }
 .week-event-row.date-note-row:hover { background: var(--border); }
 .week-event-row.date-note-row .week-event-time { font-style: normal; }
-.multiday-bar.date-note-bar { font-style: italic; font-weight: 400; color: var(--text); background: none; }
+.multiday-bar.date-note-bar { font-style: italic; font-weight: 400; color: var(--text); background: none; gap: 4px; }
+.date-note-text { flex: 0 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; }
+/* Thin line at the text's mid-height; always keeps a little room so the
+   arrow shows even when the text nearly fills the span. */
+.date-note-arrow { flex: 1 0 10px; height: 1px; background: currentColor; position: relative; opacity: 0.6; }
+.date-note-arrow::after {
+  content: ''; position: absolute; right: 0; top: 50%; width: 5px; height: 5px;
+  border-top: 1px solid currentColor; border-right: 1px solid currentColor;
+  transform: translateY(-50%) rotate(45deg);
+}
+.date-note-arrow.continues::after { display: none; }
 .day-view-note { margin-bottom: 6px; }
 .multiday-bar {
   position: absolute; height: 15px; font-size: 10px; font-weight: 500;

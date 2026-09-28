@@ -2961,7 +2961,10 @@ const Calendar = {
         const rectEnd = dayCellEls[w + colEnd].getBoundingClientRect();
         const bar = document.createElement('div');
         bar.className = 'multiday-bar date-note-bar';
-        bar.textContent = note.text;
+        // Text, then a thin midline arrow through the rest of the span. The
+        // arrowhead only shows on the note's last day -- a segment that
+        // continues into next week just runs its line to the edge.
+        bar.innerHTML = `<span class="date-note-text">${escapeHTML(note.text)}</span><span class="date-note-arrow${segEnd === note.endDate ? '' : ' continues'}"></span>`;
         const H_PAD = 2;
         bar.style.left = (rectStart.left - gridRect.left + H_PAD) + 'px';
         bar.style.width = (rectEnd.right - rectStart.left - H_PAD * 2) + 'px';

@@ -1279,7 +1279,6 @@ const Calendar = {
       list.className = 'week-day-events';
       const dayEvents = this.getEventsForDate(ds, peopleIds, categories, categoryFilter);
       const dayNotes = this.dateNotesForDate(ds);
-      dayNotes.forEach(note => list.appendChild(this.makeDateNoteRow(note, ds)));
       if (!dayEvents.length && !dayNotes.length) {
         const empty = document.createElement('p');
         empty.className = 'muted week-day-empty';
@@ -1307,6 +1306,7 @@ const Calendar = {
         });
         list.appendChild(row);
       });
+      dayNotes.forEach(note => list.appendChild(this.makeDateNoteRow(note, ds)));
       list.addEventListener('click', () => this.openEventModal(null, ds));
       section.appendChild(list);
       gridEl.appendChild(section);
@@ -1359,7 +1359,6 @@ const Calendar = {
     const list = document.createElement('div');
     list.className = 'week-day-events day-view-events';
     const dayNotes = this.dateNotesForDate(ds);
-    dayNotes.forEach(note => list.appendChild(this.makeDateNoteRow(note, ds, 'day-event-row')));
     if (!dayEvents.length && !dayNotes.length) {
       const empty = document.createElement('p');
       empty.className = 'muted week-day-empty';
@@ -1389,6 +1388,7 @@ const Calendar = {
       });
       list.appendChild(row);
     });
+    dayNotes.forEach(note => list.appendChild(this.makeDateNoteRow(note, ds, 'day-event-row')));
     list.addEventListener('click', () => this.openEventModal(null, ds));
     gridEl.appendChild(list);
   },
@@ -2040,7 +2040,6 @@ const Calendar = {
       body.innerHTML = '<p class="muted planner-empty">No events today.</p>';
       return;
     }
-    notes.forEach(note => body.appendChild(this.makeDateNoteRow(note, dateStr)));
     events.forEach(ev => {
       const color = this.colorForEvent(ev, userId);
       const row = document.createElement('button');
@@ -2059,6 +2058,7 @@ const Calendar = {
       });
       body.appendChild(row);
     });
+    notes.forEach(note => body.appendChild(this.makeDateNoteRow(note, dateStr)));
   },
 
   renderPlannerNotesWidget(body, dateStr, userId, widgetId, placeholder) {
@@ -2729,6 +2729,12 @@ const Calendar = {
         (dateMap[ds] = dateMap[ds] || []).push(event);
       });
     });
+    // Multi-day date notes run across their days as one line, like
+    // multi-day events, but sit UNDER each week's events rather than on top
+    // (see the note-bar pass at the end). Single-day notes are plain chips.
+    const multiDayNotes = !Store.getShowDateNotes(userId) ? [] : Store.getDateNotes()
+      .filter(n => n.endDate && n.endDate > n.date && n.date <= gridEnd && n.endDate >= gridStart)
+      .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
     gridDates.forEach(d => {
       const ds = formatISO(d);
       this.getBirthdayOccurrences(ds, peopleIds).forEach(b => {
@@ -2771,6 +2777,19 @@ const Calendar = {
       const ds = formatISO(d);
       barCoverageByDate[ds] = multiDayEvents.filter(ev => ev.date <= ds && ev.endDate >= ds).length;
     });
+    // Room reserved at the bottom of each cell a multi-day note crosses --
+    // one slot per note touching that week, so every note in the week can
+    // share one baseline without running off the bottom of the row.
+    const noteReserveByDate = {};
+    for (let w = 0; w < gridDates.length; w += 7) {
+      const weekStart = formatISO(gridDates[w]);
+      const weekEnd = formatISO(gridDates[w + 6]);
+      const weekNotes = multiDayNotes.filter(n => n.date <= weekEnd && n.endDate >= weekStart);
+      gridDates.slice(w, w + 7).forEach(d => {
+        const ds = formatISO(d);
+        noteReserveByDate[ds] = weekNotes.some(n => n.date <= ds && n.endDate >= ds) ? weekNotes.length : 0;
+      });
+    }
 
     const dayCellEls = [];
     gridDates.forEach(d => {
@@ -2798,17 +2817,6 @@ const Calendar = {
       // available space; see grid-auto-rows:1fr in styles.css). The
       // fitDayCellChips pass below trims each cell down to what its own
       // geometry actually allows, once that's measurable.
-      const dayNotes = this.dateNotesForDate(ds);
-      dayNotes.forEach(note => {
-        const chip = document.createElement('div');
-        chip.className = 'event-chip date-note-chip';
-        chip.textContent = note.text;
-        chip.addEventListener('click', e => {
-          e.stopPropagation();
-          this.openDateNoteModal(note, ds);
-        });
-        cell.appendChild(chip);
-      });
       const dayEvents = (dateMap[ds] || []).slice().sort(compareEventOrder(ds));
       dayEvents.forEach(ev => {
         const chip = document.createElement('div');
@@ -2822,8 +2830,28 @@ const Calendar = {
         });
         cell.appendChild(chip);
       });
+      const dayNotes = this.dateNotesForDate(ds).filter(n => !n.endDate || n.endDate === n.date);
+      dayNotes.forEach(note => {
+        const chip = document.createElement('div');
+        chip.className = 'event-chip date-note-chip';
+        chip.textContent = note.text;
+        chip.addEventListener('click', e => {
+          e.stopPropagation();
+          this.openDateNoteModal(note, ds);
+        });
+        cell.appendChild(chip);
+      });
+      if (noteReserveByDate[ds] > 0) {
+        const noteSpacer = document.createElement('div');
+        noteSpacer.className = 'day-cell-notespacer';
+        noteSpacer.style.height = (noteReserveByDate[ds] * BAR_SLOT) + 'px';
+        noteSpacer.style.flexShrink = '0';
+        cell.appendChild(noteSpacer);
+      }
 
-      const hasAnyEvents = dayEvents.length > 0 || dayNotes.length > 0 || multiDayEvents.some(ev => ev.date <= ds && ev.endDate >= ds);
+      const hasAnyEvents = dayEvents.length > 0 || dayNotes.length > 0
+        || multiDayEvents.some(ev => ev.date <= ds && ev.endDate >= ds)
+        || multiDayNotes.some(n => n.date <= ds && n.endDate >= ds);
       cell.addEventListener('click', () => {
         if (hasAnyEvents) this.openDayView(ds);
         else this.openEventModal(null, ds);
@@ -2839,7 +2867,8 @@ const Calendar = {
     dayCellEls.forEach(cell => {
       const chips = Array.from(cell.querySelectorAll('.event-chip'));
       if (!chips.length) return;
-      const limit = cell.clientHeight;
+      const noteSpacer = cell.querySelector('.day-cell-notespacer');
+      const limit = cell.clientHeight - (noteSpacer ? noteSpacer.offsetHeight : 0);
       let hiddenCount = 0;
       while (hiddenCount < chips.length) {
         const lastVisible = chips[chips.length - 1 - hiddenCount];
@@ -2851,7 +2880,7 @@ const Calendar = {
       const more = document.createElement('div');
       more.className = 'event-more';
       more.textContent = `+${hiddenCount} more`;
-      cell.appendChild(more);
+      cell.insertBefore(more, noteSpacer);
       // The label itself takes up a slot too -- if making room for it just
       // pushed IT past the bottom edge, drop one more chip and grow the count.
       while (more.offsetTop + more.offsetHeight > limit) {
@@ -2911,6 +2940,38 @@ const Calendar = {
         });
         gridEl.appendChild(bar);
       });
+
+      // Multi-day notes for this week: one shared baseline just below the
+      // tallest stack of events in any day they cross (the top of that
+      // cell's reserved note space), then stacked downward from there.
+      const weekNotes = multiDayNotes.filter(n => n.date <= weekEnd && n.endDate >= weekStart);
+      if (!weekNotes.length) continue;
+      let baseline = 0;
+      weekDates.forEach((d, col) => {
+        const spacer = dayCellEls[w + col].querySelector('.day-cell-notespacer');
+        if (spacer) baseline = Math.max(baseline, spacer.getBoundingClientRect().top);
+      });
+      weekNotes.forEach((note, stackIdx) => {
+        const segStart = note.date > weekStart ? note.date : weekStart;
+        const segEnd = note.endDate < weekEnd ? note.endDate : weekEnd;
+        const colStart = weekDates.findIndex(d => formatISO(d) === segStart);
+        const colEnd = weekDates.findIndex(d => formatISO(d) === segEnd);
+        if (colStart === -1 || colEnd === -1) return;
+        const rectStart = dayCellEls[w + colStart].getBoundingClientRect();
+        const rectEnd = dayCellEls[w + colEnd].getBoundingClientRect();
+        const bar = document.createElement('div');
+        bar.className = 'multiday-bar date-note-bar';
+        bar.textContent = note.text;
+        const H_PAD = 2;
+        bar.style.left = (rectStart.left - gridRect.left + H_PAD) + 'px';
+        bar.style.width = (rectEnd.right - rectStart.left - H_PAD * 2) + 'px';
+        bar.style.top = (baseline - gridRect.top + stackIdx * BAR_SLOT) + 'px';
+        bar.addEventListener('click', e => {
+          e.stopPropagation();
+          this.openDateNoteModal(note, note.date);
+        });
+        gridEl.appendChild(bar);
+      });
     }
   },
 
@@ -2925,8 +2986,8 @@ const Calendar = {
 
     const body = `
       <div class="modal-header"><h2>${dateLabel}</h2><button class="modal-close" id="dv-close">${icon('x')}</button></div>
-      <div id="dv-notes"></div>
       <div id="dv-list"></div>
+      <div id="dv-notes"></div>
       <div style="display:flex;gap:8px;margin-top:12px;">
         <button type="button" class="btn btn-primary" id="dv-add" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;">${icon('plus')}<span>Add event</span></button>
         <button type="button" class="btn" id="dv-add-note" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;">${icon('plus')}<span>Add note</span></button>
@@ -2938,7 +2999,7 @@ const Calendar = {
       const notesEl = root.querySelector('#dv-notes');
       dayNotes.forEach(note => notesEl.appendChild(this.makeDateNoteRow(note, dateStr, 'day-view-note')));
       const listEl = root.querySelector('#dv-list');
-      if (!dayEvents.length) {
+      if (!dayEvents.length && !dayNotes.length) {
         listEl.innerHTML = '<p class="muted">No events yet.</p>';
       }
       dayEvents.forEach(ev => {

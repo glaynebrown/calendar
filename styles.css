@@ -553,6 +553,7 @@ html.text-white .month-label:hover {
 .week-event-row.date-note-row.day-event-row, .week-event-row.date-note-row.day-view-note { padding-top: 6px; padding-bottom: 6px; }
 .week-event-row.date-note-row:hover { background: var(--border); }
 .week-event-row.date-note-row .week-event-time { font-style: normal; }
+.multiday-bar.date-note-bar { font-style: italic; font-weight: 400; color: var(--text); background: none; }
 .day-view-note { margin-bottom: 6px; }
 .multiday-bar {
   position: absolute; height: 15px; font-size: 10px; font-weight: 500;
@@ -859,6 +860,10 @@ input[type="color"]::-moz-color-swatch { border: none; border-radius: inherit; }
   box-shadow: 0 8px 24px rgba(0,0,0,0.12); padding: 4px; z-index: 20;
 }
 .repeat-menu .menu-item { padding: 8px 10px; font-size: 13px; }
+/* Date note sharing list sits at the bottom of its form, where a floating
+   menu would run off the screen -- open it in place instead, so the sheet
+   just grows to fit it. */
+#dn-share-menu { position: static; margin-top: 6px; box-shadow: none; }
 
 /* Repeat + Ends, consolidated into one field column no wider than its sibling */
 .repeat-field-row { display: flex; gap: 8px; align-items: flex-start; }

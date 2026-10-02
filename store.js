@@ -167,10 +167,18 @@ const Store = {
     this.stopSync();
     const db = firebase.firestore();
     const pending = new Set(['accounts', 'connections-a', 'connections-b', 'households', 'events', 'categories', 'views', 'editTrust', 'notes', 'preferences', 'birthdays', 'birthdayNotes', 'dateNotes', 'monthThemes', 'plannerMonthThemes']);
-    let resolveReady;
+    // Just what the calendar needs to draw itself correctly (people, events,
+    // filters, colors/theme). main.js shows the calendar as soon as these
+    // are in; the rest (notes, birthdays, date notes, backgrounds) fill in
+    // live a moment later instead of holding up the whole first screen.
+    const essential = new Set(['accounts', 'connections-a', 'connections-b', 'households', 'events', 'categories', 'views', 'editTrust', 'preferences']);
+    let resolveReady, resolveEssentials;
     const ready = new Promise(res => { resolveReady = res; });
+    this.essentialsReady = new Promise(res => { resolveEssentials = res; });
     const settle = key => {
       pending.delete(key);
+      essential.delete(key);
+      if (essential.size === 0) resolveEssentials();
       if (pending.size === 0) resolveReady();
     };
     const notify = () => this._changeListeners.forEach(fn => fn());

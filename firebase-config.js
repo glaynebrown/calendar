@@ -19,7 +19,12 @@ const VAPID_KEY = 'BAkw0-WB-s93box6mm05B79708tKwtdZ7xR-9gNuivmbPM1fwzb9jxzreyjdx
 
 firebase.initializeApp(firebaseConfig);
 
-firebase.firestore().enablePersistence({ synchronizeTabs: true }).catch(err => {
+// Single-owner offline cache, not shared across tabs. Shared ("synchronizeTabs")
+// mode makes each launch wait for the previous copy's ownership claim to
+// expire -- and iOS often closes a home-screen app without releasing it,
+// which showed up as random 5-10 second startups even on good Wi-Fi. A
+// second desktop tab simply runs without the offline cache instead.
+firebase.firestore().enablePersistence({ synchronizeTabs: false, experimentalForceOwningTab: true }).catch(err => {
   // Fails in some browsers/tabs (e.g. multiple tabs without synchronizeTabs
   // support, or private browsing). The app still works online without it --
   // it just loses the offline queue/cache benefit.

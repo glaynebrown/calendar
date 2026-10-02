@@ -157,15 +157,22 @@ const App = {
     const cameFromSignIn = !whoamiScreen.classList.contains('hidden');
     whoamiScreen.classList.add('hidden');
     if (cameFromSignIn) document.getElementById('loading-screen').classList.remove('hidden');
-    await Store.startSync(user.uid);
+    // Draw as soon as the essentials are in (see Store.startSync); the
+    // one-time migrations/repairs below still wait for EVERYTHING, since
+    // some of them check collections that load in the second wave.
+    const fullySynced = Store.startSync(user.uid);
+    await Store.essentialsReady;
     document.getElementById('loading-screen').classList.add('hidden');
-    Store.migrateLocalNotesIfNeeded(user.uid);
-    // Chained, not fired in parallel -- migrateMonthThemesIfNeeded deletes
-    // fields off the preferences doc that migrateLocalPreferencesIfNeeded
-    // is responsible for creating, so it has to run strictly after.
-    Store.migrateLocalPreferencesIfNeeded(user.uid).then(() => Store.migrateMonthThemesIfNeeded(user.uid));
-    Store.migrateLocalBirthdaysIfNeeded(user.uid);
-    Store.claimLegacyCategoriesIfNeeded(user.uid);
+    fullySynced.then(() => {
+      Store.migrateLocalNotesIfNeeded(user.uid);
+      // Chained, not fired in parallel -- migrateMonthThemesIfNeeded deletes
+      // fields off the preferences doc that migrateLocalPreferencesIfNeeded
+      // is responsible for creating, so it has to run strictly after.
+      Store.migrateLocalPreferencesIfNeeded(user.uid).then(() => Store.migrateMonthThemesIfNeeded(user.uid));
+      Store.migrateLocalBirthdaysIfNeeded(user.uid);
+      Store.claimLegacyCategoriesIfNeeded(user.uid);
+      Store.reconcileHouseholdTies(user.uid);
+    });
     Store.onDataChange(() => {
       // Re-applies the theme on every cache update, not just ones that
       // actually touched it -- cheap (just sets a few CSS vars/classes) and
@@ -194,7 +201,6 @@ const App = {
     if (me && !me.timezone) {
       Store.updateAccount(user.uid, { timezone: Intl.DateTimeFormat().resolvedOptions().timeZone });
     }
-    Store.reconcileHouseholdTies(user.uid);
     // A fresh app load (this whole function only runs once per real
     // sign-in/cold-boot, not on routine in-app navigation -- see
     // onAuthStateChanged's own comment) always starts on the chosen

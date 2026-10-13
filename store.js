@@ -1383,6 +1383,28 @@ const Store = {
       console.warn('Note migration failed, will retry next load:', err.code);
     }
   },
+  // Checked-off to-do items delete themselves 3 days after being checked
+  // (all lists are grocery-style -- nothing is reused). Items checked before
+  // checkedAt existed get stamped "now" the first time this runs, so they
+  // get the same 3-day grace instead of vanishing on the spot. Runs on app
+  // open and whenever the app comes back to the foreground; whichever
+  // household device runs it first does the cleanup for everyone.
+  cleanupCheckedItems() {
+    const now = Date.now();
+    const MAX_AGE = 3 * 24 * 60 * 60 * 1000;
+    _cache.notes.forEach(note => {
+      if (!Array.isArray(note.items) || note.type === 'bullets' || note.type === 'numbered') return;
+      let changed = false;
+      const items = [];
+      note.items.forEach(it => {
+        if (!it || !it.checked) { items.push(it); return; }
+        if (!it.checkedAt) { items.push({ ...it, checkedAt: now }); changed = true; return; }
+        if (now - it.checkedAt > MAX_AGE) { changed = true; return; }
+        items.push(it);
+      });
+      if (changed) this.updateNote(note.id, { items });
+    });
+  },
   getShowChecked(userId) {
     return localStorage.getItem(`fc_showchecked_${userId}`) === '1';
   },

@@ -125,6 +125,12 @@ const App = {
     //    dropdown layered on top of the named view -- picking one here
     //    doesn't touch activeViewId at all, so it used to survive this
     //    reset and keep filtering the default view down after reopening.
+    // Coming back to the app (it can sit open in the background for days):
+    // drop any to-do items that have now been checked for over 3 days.
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden || !Store.getCurrentUserId()) return;
+      Store.cleanupCheckedItems();
+    });
     document.addEventListener('visibilitychange', () => {
       if (!document.hidden) return;
       const userId = Store.getCurrentUserId();
@@ -172,6 +178,7 @@ const App = {
       Store.migrateLocalBirthdaysIfNeeded(user.uid);
       Store.claimLegacyCategoriesIfNeeded(user.uid);
       Store.reconcileHouseholdTies(user.uid);
+      Store.cleanupCheckedItems();
     });
     Store.onDataChange(() => {
       // Re-applies the theme on every cache update, not just ones that

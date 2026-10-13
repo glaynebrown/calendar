@@ -386,6 +386,9 @@ const Todo = {
         if (hasCheckbox) {
           row.querySelector('.note-check').addEventListener('click', () => {
             it.checked = !it.checked;
+            // When it was checked off drives the 3-day auto-delete (see
+            // Store.cleanupCheckedItems); unchecking resets the clock.
+            if (it.checked) it.checkedAt = Date.now(); else delete it.checkedAt;
             Store.updateNote(note.id, { items: note.items });
             Todo.render();
           });
@@ -499,6 +502,7 @@ const Todo = {
                 freshCheckBtn.innerHTML = icon('square');
                 freshCheckBtn.addEventListener('click', () => {
                   newItem.checked = !newItem.checked;
+                  if (newItem.checked) newItem.checkedAt = Date.now(); else delete newItem.checkedAt;
                   Store.updateNote(note.id, { items: note.items });
                   Todo.render();
                 });
@@ -530,14 +534,11 @@ const Todo = {
           if (textEl) textEl.replaceWith(input);
           else rowEl.appendChild(input);
         }
-        // Called every time, reuse included -- this turned out to be the
-        // actual missing piece. DOM focus was never really the problem
-        // (the input was confirmed to still be document.activeElement
-        // throughout), but iOS Safari's on-screen KEYBOARD only reappears
-        // in response to an explicit, synchronous focus() call; it doesn't
-        // reliably follow along just because the element was already
-        // focused. Calling it here, unconditionally, inside the same
-        // keydown handler that triggered all this, is what re-summons it.
+        // DOM focus was confirmed NOT to be the problem -- the input stays
+        // document.activeElement throughout regardless. What's actually
+        // missing is iOS Safari's on-screen KEYBOARD specifically, which is
+        // its own separate state this environment has no way to observe or
+        // verify directly.
         input.focus();
         if (!reuseInput) input.select();
       }

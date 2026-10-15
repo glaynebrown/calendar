@@ -3549,6 +3549,9 @@ const Calendar = {
     // Your own private gift-ideas note for this birthday (Store.getMyGiftIdeas)
     // -- never written to the event, and never visible to anyone else viewing it.
     const myGiftIdeas = event && event.birthdayId ? Store.getMyGiftIdeas(userId, event.birthdayId) : null;
+    // Same "<name>'s wishlist" button as the details view (see openWishlist).
+    const wishBd = event && event.birthdayId && Store.getShowWishlists(userId)
+      ? Store.getBirthdays(userId).concat(Store.getSharedBirthdays(userId)).find(b => b.id === event.birthdayId) : null;
 
     const type = event ? event.type : 'single';
     const baseDate = event ? (event.type === 'custom' ? (event.dates || [dateStr])[0] : event.date) : dateStr;
@@ -3680,6 +3683,10 @@ const Calendar = {
           <textarea id="ev-notes" rows="1" placeholder="Add a note">${event && event.notes ? escapeAttr(event.notes) : ''}</textarea>
         </div>
       </div>
+      ${wishBd && wishBd.name ? `
+      <div class="field wishlist-field">
+        ${icon('gift')}<button type="button" class="wishlist-link" data-wishlist="${escapeAttr(wishBd.name)}">${escapeHTML(wishBd.name)}'s wishlist</button>
+      </div>` : ''}
       ${event && event.birthdayId ? `
       <div class="field">
         <div class="textarea-with-icon">

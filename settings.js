@@ -366,6 +366,13 @@ const Settings = {
             <span class="switch-track"></span>
           </span>
         </label>
+        <label class="switch-row" id="st-wishlists-row" style="margin-top:10px;">
+          <span>Show Wishwell wishlists on birthdays</span>
+          <span class="switch">
+            <input type="checkbox" id="st-wishlists-toggle" ${Store.getShowWishlists(userId) ? 'checked' : ''}>
+            <span class="switch-track"></span>
+          </span>
+        </label>
         <label class="switch-row" id="st-event-colors-row" style="margin-top:10px;">
           <span>Show colored backgrounds/borders on events</span>
           <span class="switch">
@@ -509,6 +516,9 @@ const Settings = {
       });
 
       const eventTextModeSelect = root.querySelector('#st-event-text-mode');
+      root.querySelector('#st-wishlists-toggle').addEventListener('change', e => {
+        Store.setShowWishlists(userId, e.target.checked);
+      });
       root.querySelector('#st-event-colors-toggle').addEventListener('change', e => {
         Store.setShowEventColors(userId, e.target.checked);
         eventTextModeSelect.disabled = !e.target.checked;

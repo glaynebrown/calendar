@@ -3458,15 +3458,15 @@ const Calendar = {
         <div class="detail-row-content">${escapeHTML(event.notes).replace(/\n/g, '<br>')}</div>
       </div>
     `);
-    // Wishlist button: opens this person's list in Wishwell (a separate app),
-    // which finds them among your Wishwell connections by name.
-    if (event.birthdayId) {
+    // Wishlist button: opens this person's list from Wishwell (a separate app)
+    // in a panel right here -- see openWishlist at the bottom of this file.
+    if (event.birthdayId && Store.getShowWishlists(userId)) {
       const bd = Store.getBirthdays(userId).concat(Store.getSharedBirthdays(userId)).find(b => b.id === event.birthdayId);
       if (bd && bd.name) rows.push(`
         <div class="detail-row">
           <span class="detail-row-icon">${icon('gift')}</span>
           <div class="detail-row-content">
-            <a class="wishlist-link" href="https://glaynebrown.github.io/wishwell/#/find/${encodeURIComponent(bd.name)}" target="_blank" rel="noopener">${escapeHTML(bd.name)}'s wishlist ↗</a>
+            <button type="button" class="wishlist-link" data-wishlist="${escapeAttr(bd.name)}">${escapeHTML(bd.name)}'s wishlist</button>
           </div>
         </div>
       `);
@@ -4464,3 +4464,27 @@ const Calendar = {
 function escapeAttr(s) {
   return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
 }
+
+// ---- Wishwell panel ----
+// The "<name>'s wishlist" button on a birthday opens Wishwell (a separate app on
+// the same site) inside a tall panel, straight to that person's list. iPhone
+// can't jump from one Home Screen app to another, so this keeps you here.
+// Sign in to Wishwell once inside the panel; it remembers you after that.
+const WISHWELL_URL = 'https://glaynebrown.github.io/wishwell/';
+function openWishlist(name) {
+  const url = WISHWELL_URL + '?embed=1#/find/' + encodeURIComponent(name);
+  openModal(`
+    <div class="wishlist-head">
+      <h2>${escapeHTML(name)}'s wishlist</h2>
+      <button class="modal-close" id="wl-close" aria-label="Close">${icon('x')}</button>
+    </div>
+    <iframe class="wishlist-frame" src="${url}" title="${escapeAttr(name)}'s wishlist"></iframe>
+  `, root => {
+    root.querySelector('.modal-sheet').classList.add('wishlist-sheet');
+    root.querySelector('#wl-close').addEventListener('click', closeModal);
+  });
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-wishlist]');
+  if (b) { e.preventDefault(); openWishlist(b.dataset.wishlist); }
+});

@@ -1002,6 +1002,17 @@ const Store = {
     localStorage.setItem(`fc_showEventColors_${userId}`, val ? '1' : '0');
     this._syncPref(userId, 'showEventColors', !!val);
   },
+  // Whether birthdays show the "<name>'s wishlist" button (opens Wishwell).
+  // Per-person, on by default -- anyone who doesn't use Wishwell turns it off.
+  getShowWishlists(userId) {
+    const synced = this._pref('showWishlists');
+    if (synced !== undefined) return synced;
+    return localStorage.getItem(`fc_showWishlists_${userId}`) !== '0';
+  },
+  setShowWishlists(userId, val) {
+    localStorage.setItem(`fc_showWishlists_${userId}`, val ? '1' : '0');
+    this._syncPref(userId, 'showWishlists', !!val);
+  },
   // Whether date notes show on the calendar at all -- the on/off switch in
   // the Month/Week/Day view menu. Per-viewer, on by default.
   getShowDateNotes(userId) {

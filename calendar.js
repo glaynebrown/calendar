@@ -3691,7 +3691,7 @@ const Calendar = {
       <div class="field">
         <div class="textarea-with-icon">
           ${icon('gift')}
-          <textarea id="ev-gift-ideas" rows="1" placeholder="Wish list / gift ideas (private to you)">${myGiftIdeas ? escapeAttr(myGiftIdeas) : ''}</textarea>
+          <textarea id="ev-gift-ideas" rows="1" placeholder="Gift ideas (private to you)">${myGiftIdeas ? escapeAttr(myGiftIdeas) : ''}</textarea>
         </div>
       </div>
       ` : ''}

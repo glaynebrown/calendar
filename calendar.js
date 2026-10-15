@@ -3683,15 +3683,12 @@ const Calendar = {
           <textarea id="ev-notes" rows="1" placeholder="Add a note">${event && event.notes ? escapeAttr(event.notes) : ''}</textarea>
         </div>
       </div>
-      ${wishBd && wishBd.name ? `
-      <div class="field wishlist-field">
-        ${icon('gift')}<button type="button" class="wishlist-link" data-wishlist="${escapeAttr(wishBd.name)}">${escapeHTML(wishBd.name)}'s wishlist</button>
-      </div>` : ''}
       ${event && event.birthdayId ? `
       <div class="field">
         <div class="textarea-with-icon">
           ${icon('gift')}
           <textarea id="ev-gift-ideas" rows="1" placeholder="Gift ideas (private to you)">${myGiftIdeas ? escapeAttr(myGiftIdeas) : ''}</textarea>
+          ${wishBd && wishBd.name ? `<button type="button" class="wishlist-chip" data-wishlist="${escapeAttr(wishBd.name)}" aria-label="${escapeAttr(wishBd.name)}'s wishlist">Wishlist ›</button>` : ''}
         </div>
       </div>
       ` : ''}

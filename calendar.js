@@ -3458,6 +3458,19 @@ const Calendar = {
         <div class="detail-row-content">${escapeHTML(event.notes).replace(/\n/g, '<br>')}</div>
       </div>
     `);
+    // Wishlist button: opens this person's list in Wishwell (a separate app),
+    // which finds them among your Wishwell connections by name.
+    if (event.birthdayId) {
+      const bd = Store.getBirthdays(userId).concat(Store.getSharedBirthdays(userId)).find(b => b.id === event.birthdayId);
+      if (bd && bd.name) rows.push(`
+        <div class="detail-row">
+          <span class="detail-row-icon">${icon('gift')}</span>
+          <div class="detail-row-content">
+            <a class="wishlist-link" href="https://glaynebrown.github.io/wishwell/#/find/${encodeURIComponent(bd.name)}" target="_blank" rel="noopener">${escapeHTML(bd.name)}'s wishlist ↗</a>
+          </div>
+        </div>
+      `);
+    }
     // Your own private gift-ideas note for this birthday (Store.getMyGiftIdeas)
     // -- independent of who owns the birthday or the event, and invisible to
     // anyone else, including them.

@@ -442,6 +442,15 @@ const Calendar = {
   // synthesized on the fly from each visible person's birthday list and
   // merged in wherever getEventsForDate is used, so every view picks them up
   // for free. Not affected by category filters, since they aren't categorized.
+  // Whose birthdays to show: the view's people, PLUS anyone who's shared
+  // birthdays with you -- shared birthdays show in every view (even "Just
+  // me"); hide individual ones via Settings -> Birthdays -> Shared with you.
+  birthdayOwnerIds(peopleIds) {
+    const ids = new Set(peopleIds);
+    Store.getSharedBirthdays(Store.getCurrentUserId()).forEach(b => ids.add(b.ownerId));
+    return Array.from(ids);
+  },
+
   getBirthdayOccurrences(dateStr, peopleIds) {
     const [y, m, d] = dateStr.split('-').map(Number);
     const eventIds = new Set(Store.getEvents().map(e => e.id));
@@ -453,7 +462,7 @@ const Calendar = {
     const bdIcon = Store.getBirthdayIcon(userId);
     const iconPrefix = bdIcon ? `${bdIcon} ` : '';
     const hiddenBirthdays = Store.getHiddenBirthdays(userId);
-    return peopleIds
+    return this.birthdayOwnerIds(peopleIds)
       .flatMap(ownerId => Store.getBirthdays(ownerId).map(b => ({ ...b, ownerId })))
       .filter(b => b.month === m && b.day === d)
       .filter(b => !hiddenBirthdays.includes(b.id))
@@ -1119,7 +1128,7 @@ const Calendar = {
       // Already-enriched occurrences are skipped here on purpose -- the real
       // linked event already represents them and is picked up by
       // eventResults above (same title, so it still matches).
-      const birthdayResults = peopleIds
+      const birthdayResults = Calendar.birthdayOwnerIds(peopleIds)
         .flatMap(ownerId => Store.getBirthdays(ownerId).map(b => ({ ...b, ownerId })))
         .filter(b => b.name.toLowerCase().includes(q))
         .map(b => {
@@ -3222,14 +3231,15 @@ const Calendar = {
           row.innerHTML = `
             <input type="color" class="bd-personal-color" value="${resolvedColor(b)}" aria-label="Your color for ${escapeAttr(b.name)}'s birthday">
             <button type="button" class="menu-item">${escapeHTML(b.name)} - ${MONTH_NAMES[b.month - 1]} ${b.day}${b.year ? ', ' + b.year : ''}</button>
-            <label class="birthday-row-shared-label"><input type="checkbox" ${b.shared ? 'checked' : ''}>Shared</label>
+            ${Store.getHouseholdsFor(userId).length ? `<label class="birthday-row-shared-label"><input type="checkbox" ${b.shared ? 'checked' : ''}>Shared</label>` : ''}
           `;
           row.querySelector('.bd-personal-color').addEventListener('input', e => {
             Store.setBirthdayColor(userId, b.id, e.target.value);
             Calendar.render();
           });
           row.querySelector('.menu-item').addEventListener('click', () => renderForm(b));
-          row.querySelector('.birthday-row-shared-label input').addEventListener('change', e => {
+          const sharedCb = row.querySelector('.birthday-row-shared-label input');
+          if (sharedCb) sharedCb.addEventListener('change', e => {
             Store.setBirthdayShared(userId, b.id, e.target.checked);
           });
           listEl.appendChild(row);

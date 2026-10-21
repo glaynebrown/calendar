@@ -769,25 +769,45 @@ const Settings = {
         el.innerHTML = `
           <p style="font-weight:500;margin:0 0 2px;">Viewers</p>
           <p class="muted" style="margin:0 0 6px;">Viewers can see the shared events of the people you pick, but can't change anything. Those people can add appointments to the viewer's calendar for them.</p>
-          ${iView.length ? `<p class="muted" style="margin:0 0 6px;">You're a viewer of ${escapeHTML(iView.map(nameOf).join(', '))}.</p>` : ''}
+          ${iView.length ? `<p class="muted" style="margin:0 0 4px;">You're a viewer of:</p><div id="st-viewing-list" style="margin-bottom:6px;"></div>` : ''}
           <div id="st-viewers-list"></div>
           ${circle.size > 1 ? '<button type="button" class="link-btn" id="st-invite-viewer">Invite a viewer</button>' : ''}
         `;
+        // Tap-to-change color icon, same as the household list -- viewers
+        // are kept out of the Connections list, so this is their color picker.
+        const colorAvatar = id => {
+          const c = Store.colorFor(userId, id);
+          return `<span class="avatar-color-wrap">
+            <span class="avatar-mini avatar-color-btn" style="background:${c};">${initials(nameOf(id))}</span>
+            <input type="color" class="avatar-color-input color-input-overlay" data-color-for="${id}" aria-label="Change ${escapeAttr(nameOf(id))}'s color" value="${c}">
+          </span>`;
+        };
+        const viewingEl = el.querySelector('#st-viewing-list');
+        if (viewingEl) viewingEl.innerHTML = iView.map(id => `
+          <div style="display:flex;align-items:center;gap:8px;padding:2px 0;">${colorAvatar(id)}<span>${escapeHTML(nameOf(id))}</span></div>
+        `).join('');
         const listEl = el.querySelector('#st-viewers-list');
         byViewer.forEach((ofIds, viewerId) => {
           const row = document.createElement('div');
           row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;padding:2px 0;';
           row.innerHTML = `
-            <span style="min-width:0;">${escapeHTML(nameOf(viewerId))} <span class="muted">sees ${escapeHTML(ofIds.map(id => id === userId ? 'you' : nameOf(id)).join(', '))}</span></span>
+            <span style="display:flex;align-items:center;gap:8px;min-width:0;">${colorAvatar(viewerId)}<span>${escapeHTML(nameOf(viewerId))} <span class="muted">sees ${escapeHTML(ofIds.map(id => id === userId ? 'you' : nameOf(id)).join(', '))}</span></span></span>
             <button type="button" class="link-btn" style="color:var(--text-danger,#c0392b);flex-shrink:0;">Remove</button>
           `;
-          row.querySelector('button').addEventListener('click', () => {
+          row.querySelector('button.link-btn').addEventListener('click', () => {
             if (!confirm(`Remove ${nameOf(viewerId)} as a viewer? They'll stop seeing these calendars.`)) return;
             Store.removeViewer(viewerId);
             renderViewers();
             Calendar.render();
           });
           listEl.appendChild(row);
+        });
+        el.querySelectorAll('[data-color-for]').forEach(input => {
+          input.addEventListener('input', e => {
+            Store.setColorForPerson(userId, input.dataset.colorFor, e.target.value);
+            input.closest('.avatar-color-wrap').querySelector('.avatar-color-btn').style.background = e.target.value;
+            Calendar.render();
+          });
         });
         const inviteBtn = el.querySelector('#st-invite-viewer');
         if (inviteBtn) inviteBtn.addEventListener('click', () => openViewerInvite(Array.from(circle)));

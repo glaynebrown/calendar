@@ -766,10 +766,18 @@ const Settings = {
         const byViewer = new Map();
         grants.forEach(g => byViewer.set(g.viewerId, [...(byViewer.get(g.viewerId) || []), g.ofUid]));
         const iView = Store.viewedBy(userId);
+        // People whose events you can see (e.g. family events Bella or Nick
+        // are tagged on) but who aren't one of your own people -- otherwise
+        // there'd be nowhere to pick the color their events show in for you.
+        const knownIds = new Set(Store.getKnownPeople(userId).map(p => p.id));
+        const othersOnEvents = iView.length
+          ? Array.from(new Set(Store.getEvents().map(e => e.ownerId))).filter(id => id && !knownIds.has(id) && Store.getAccount(id))
+          : [];
         el.innerHTML = `
           <p style="font-weight:500;margin:0 0 2px;">Viewers</p>
           <p class="muted" style="margin:0 0 6px;">Viewers can see the shared events of the people you pick, but can't change anything. Those people can add appointments to the viewer's calendar for them.</p>
           ${iView.length ? `<p class="muted" style="margin:0 0 4px;">You're a viewer of:</p><div id="st-viewing-list" style="margin-bottom:6px;"></div>` : ''}
+          ${othersOnEvents.length ? `<p class="muted" style="margin:0 0 4px;">Others on events you can see:</p><div id="st-others-list" style="margin-bottom:6px;"></div>` : ''}
           <div id="st-viewers-list"></div>
           ${circle.size > 1 ? '<button type="button" class="link-btn" id="st-invite-viewer">Invite a viewer</button>' : ''}
         `;
@@ -784,6 +792,10 @@ const Settings = {
         };
         const viewingEl = el.querySelector('#st-viewing-list');
         if (viewingEl) viewingEl.innerHTML = iView.map(id => `
+          <div style="display:flex;align-items:center;gap:8px;padding:2px 0;">${colorAvatar(id)}<span>${escapeHTML(nameOf(id))}</span></div>
+        `).join('');
+        const othersEl = el.querySelector('#st-others-list');
+        if (othersEl) othersEl.innerHTML = othersOnEvents.map(id => `
           <div style="display:flex;align-items:center;gap:8px;padding:2px 0;">${colorAvatar(id)}<span>${escapeHTML(nameOf(id))}</span></div>
         `).join('');
         const listEl = el.querySelector('#st-viewers-list');

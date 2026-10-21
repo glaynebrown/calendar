@@ -1407,6 +1407,24 @@ const Store = {
   eventColorFor(userId, eventId) {
     return this.getEventColorMap(userId)[eventId] || null;
   },
+  // One-time-ish cleanup: events saved before custom colors became
+  // per-person still carry a `color` on the shared event itself, which
+  // everyone sees and nobody but the editors can change (it even beats a
+  // viewer's own category color). Anyone who can edit such an event keeps
+  // it as their OWN color (so nothing changes on their phone), and the
+  // owner's device then clears it off the event for everyone else.
+  migrateLegacyEventColors(userId) {
+    const legacy = _cache.events.filter(e => e.color && this.canEditEvent(e));
+    if (!legacy.length) return;
+    const map = { ...this.getEventColorMap(userId) };
+    let changed = false;
+    legacy.forEach(e => { if (!map[e.id]) { map[e.id] = e.color; changed = true; } });
+    if (changed) {
+      writeJSON(`fc_eventcolors_${userId}`, map);
+      this._syncPref(userId, 'eventColors', map);
+    }
+    legacy.filter(e => e.ownerId === userId).forEach(e => this.updateEvent(e.id, { color: null }));
+  },
 
   // ---- per-account theme -- zero-arg by design (always the current
   // signed-in user's own), same as getCurrentUserId(). Falls back to this

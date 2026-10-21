@@ -179,6 +179,7 @@ const App = {
       Store.claimLegacyCategoriesIfNeeded(user.uid);
       Store.reconcileHouseholdTies(user.uid);
       Store.reconcileViewerAccess(user.uid);
+      Store.migrateLegacyEventColors(user.uid);
       Store.cleanupCheckedItems();
     });
     Store.onDataChange(() => {

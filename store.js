@@ -154,6 +154,9 @@ function computeBirthdayVisibleTo(ownerId, shared) {
   const ids = new Set([ownerId]);
   Store.getHouseholdsFor(ownerId).forEach(h => h.memberIds.forEach(id => ids.add(id)));
   Store.viewersOf(ownerId).forEach(id => ids.add(id));
+  // A viewer's shared birthdays go to the people they view (e.g. Mom's
+  // side of the family -> Bella and Nick), never wider.
+  Store.viewedBy(ownerId).forEach(id => ids.add(id));
   return Array.from(ids);
 }
 

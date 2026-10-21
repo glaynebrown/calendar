@@ -3231,7 +3231,7 @@ const Calendar = {
           row.innerHTML = `
             <input type="color" class="bd-personal-color" value="${resolvedColor(b)}" aria-label="Your color for ${escapeAttr(b.name)}'s birthday">
             <button type="button" class="menu-item">${escapeHTML(b.name)} - ${MONTH_NAMES[b.month - 1]} ${b.day}${b.year ? ', ' + b.year : ''}</button>
-            ${Store.getHouseholdsFor(userId).length ? `<label class="birthday-row-shared-label"><input type="checkbox" ${b.shared ? 'checked' : ''}>Shared</label>` : ''}
+            ${(Store.getHouseholdsFor(userId).length || Store.viewedBy(userId).length) ? `<label class="birthday-row-shared-label"><input type="checkbox" ${b.shared ? 'checked' : ''}>Shared</label>` : ''}
           `;
           row.querySelector('.bd-personal-color').addEventListener('input', e => {
             Store.setBirthdayColor(userId, b.id, e.target.value);

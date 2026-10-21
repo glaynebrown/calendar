@@ -236,16 +236,19 @@ const Todo = {
         document.addEventListener('pointermove', move);
         document.addEventListener('pointerup', up);
       });
-      const isPhoto = !!note.bgPhoto;
+      // Your own look for this list if you've set one (see Store.getNoteLook),
+      // otherwise the list's shared look.
+      const look = Store.effectiveNoteLook(note);
+      const isPhoto = !!look.bgPhoto;
       if (isPhoto) {
-        card.style.backgroundImage = `linear-gradient(rgba(20,20,20,0.5), rgba(20,20,20,0.35)), url(${note.bgPhoto})`;
+        card.style.backgroundImage = `linear-gradient(rgba(20,20,20,0.5), rgba(20,20,20,0.35)), url(${look.bgPhoto})`;
       } else {
-        card.style.background = note.bgColor || NOTE_PALETTE[0].bg;
+        card.style.background = look.bgColor || NOTE_PALETTE[0].bg;
       }
       // note.textColor is always set at save time now (auto-contrast or a
       // manual pick -- see openNoteModal), photo backgrounds included, so
       // this fallback only ever matters for notes saved before this existed.
-      const textColor = note.textColor || (isPhoto ? '#ffffff' : NOTE_PALETTE[0].text);
+      const textColor = look.textColor || (isPhoto ? '#ffffff' : NOTE_PALETTE[0].text);
       resizeHandle.style.color = textColor;
       resizeHandle.style.opacity = '0.55';
       card.appendChild(resizeHandle);
@@ -720,9 +723,14 @@ const Todo = {
     const isEdit = !!note;
     const noteType = isEdit ? (note.type || 'checklist') : (newType || 'checklist');
     const isOwner = !isEdit || note.ownerId === userId;
+    // The look fields below show YOUR look for this list (your own if
+    // you've set one, else the list's) -- see the save handler.
+    const look = note ? Store.effectiveNoteLook(note) : null;
+    const hasMyLook = !!(note && Store.getNoteLook(note.id));
+    const wasShared = !!(note && (note.sharedWith || []).length);
     const presets = NOTE_PALETTE.slice(0, 2);
-    const presetIdx = note ? presets.findIndex(p => p.bg === note.bgColor) : 0;
-    const isCustomColor = !!(note && note.bgColor && !note.bgPhoto && presetIdx < 0);
+    const presetIdx = look ? presets.findIndex(p => p.bg === look.bgColor) : 0;
+    const isCustomColor = !!(look && look.bgColor && !look.bgPhoto && presetIdx < 0);
     const otherPeople = Store.getKnownPeople(userId).filter(p => p.id !== userId);
     const modalTitle = isEdit ? 'Edit note' : `New ${(presetMeta && presetMeta.label) || NOTE_TYPE_LABELS[noteType] || 'Note'}`;
     const defaultTitle = note ? note.title : (presetMeta ? presetMeta.label : '');
@@ -735,10 +743,10 @@ const Todo = {
           <div class="bg-color-grid" id="nt-color-grid">
             ${presets.map((p, i) => `<button type="button" class="bg-color-swatch" data-i="${i}" style="background:${p.bg}"></button>`).join('')}
             <span class="color-box color-wheel-trigger" title="Pick any color">
-              <input type="color" id="nt-color-custom" value="${isCustomColor ? note.bgColor : '#f4f3ef'}">
+              <input type="color" id="nt-color-custom" value="${isCustomColor ? look.bgColor : '#f4f3ef'}">
             </span>
-            <button type="button" class="time-field-btn icon-only${note && note.bgPhoto ? ' active' : ''}" id="nt-photo-btn" aria-label="Choose photo background">${icon('image')}</button>
-            <button type="button" class="icon-btn${note && note.bgPhoto ? '' : ' hidden'}" id="nt-photo-clear" aria-label="Remove photo">${icon('x')}</button>
+            <button type="button" class="time-field-btn icon-only${look && look.bgPhoto ? ' active' : ''}" id="nt-photo-btn" aria-label="Choose photo background">${icon('image')}</button>
+            <button type="button" class="icon-btn${look && look.bgPhoto ? '' : ' hidden'}" id="nt-photo-clear" aria-label="Remove photo">${icon('x')}</button>
           </div>
           <input type="file" id="nt-photo" accept="image/*" class="hidden">
         </div>
@@ -747,11 +755,12 @@ const Todo = {
           <div style="display:flex; gap:6px; align-items:center;">
             <button type="button" class="time-field-btn" id="nt-text-auto" style="width:auto; padding:9px 14px;">Auto</button>
             <span class="color-box color-wheel-trigger" title="Pick any color">
-              <input type="color" id="nt-text-custom" value="${note && note.textColor ? note.textColor : '#26231f'}">
+              <input type="color" id="nt-text-custom" value="${look && look.textColor ? look.textColor : '#26231f'}">
             </span>
           </div>
         </div>
       </div>
+      ${wasShared ? `<p class="muted" style="margin:-4px 0 8px;font-size:12px;">Background and text color changes are just for you.${hasMyLook ? ' <button type="button" class="link-btn" id="nt-look-reset" style="font-size:12px;">Use the list\'s look</button>' : ''}</p>` : ''}
       ${isOwner && otherPeople.length ? `
       <div class="checkbox-row">
         <button type="button" class="link-btn" id="nt-share-toggle">Share with specific people</button>
@@ -767,11 +776,11 @@ const Todo = {
     openModal(body, root => {
       root.querySelector('#nt-close').addEventListener('click', closeModal);
       let chosenColorIdx = presetIdx < 0 ? 0 : presetIdx;
-      let customColor = isCustomColor ? note.bgColor : null;
-      let photoDataUrl = note ? note.bgPhoto || null : null;
+      let customColor = isCustomColor ? look.bgColor : null;
+      let photoDataUrl = look ? look.bgPhoto || null : null;
       // null = automatic (contrast-computed from the background, same as
       // before this existed); a hex string = the viewer's own explicit pick.
-      let manualTextColor = note && note.textColorManual ? note.textColor : null;
+      let manualTextColor = look && look.textColorManual ? look.textColor : null;
 
       const grid = root.querySelector('#nt-color-grid');
       const wheelTrigger = grid.querySelector('.color-wheel-trigger');
@@ -843,6 +852,13 @@ const Todo = {
       const peoplePicker = root.querySelector('#nt-people-picker');
       if (shareToggle) shareToggle.addEventListener('click', () => peoplePicker.classList.toggle('hidden'));
 
+      const lookReset = root.querySelector('#nt-look-reset');
+      if (lookReset) lookReset.addEventListener('click', () => {
+        Store.clearMyNoteLook(note.id);
+        closeModal();
+        Todo.render();
+      });
+
       if (isEdit && isOwner) {
         root.querySelector('#nt-delete').addEventListener('click', () => {
           Store.deleteNote(note.id);
@@ -860,8 +876,18 @@ const Todo = {
         const sharedWith = isOwner && peoplePicker
           ? Array.from(peoplePicker.querySelectorAll('input:checked')).map(i => i.value)
           : (note ? note.sharedWith || [] : []);
-        if (isEdit) {
+        if (isEdit && wasShared) {
+          // Shared list: the look is yours alone (only saved if you changed
+          // it); title and sharing stay shared.
+          Store.updateNote(note.id, { title, sharedWith });
+          const changed = bgColor !== look.bgColor || textColor !== look.textColor
+            || textColorManual !== look.textColorManual || (photoDataUrl || null) !== look.bgPhoto;
+          if (changed) Store.setMyNoteLook(note.id, { bgColor, textColor, textColorManual, bgPhoto: photoDataUrl });
+        } else if (isEdit) {
+          // Not shared yet: the look is the list's own (and becomes everyone's
+          // starting look if you share it later).
           Store.updateNote(note.id, { title, bgColor, textColor, textColorManual, bgPhoto: photoDataUrl, sharedWith });
+          if (hasMyLook) Store.clearMyNoteLook(note.id);
         } else {
           // Seeds each widget type's own fields fresh -- everything else
           // (background, sharing, width) works identically across every

@@ -55,6 +55,7 @@ const _cache = {
   preferences: {}, // the CURRENT signed-in user's own synced appearance settings (private)
   birthdays: [],      // own birthdays plus any shared with the current user (see the `visibleTo` note below)
   birthdayNotes: [],  // the CURRENT signed-in user's own private gift-idea notes only (private)
+  noteLooks: {},      // the CURRENT user's own look (colors/photo) for shared lists, keyed by note id (private)
   viewerGrants: [],   // who views whom: { viewerId, ofUid, createdBy } -- see viewersOf/canEditCalendarOf
   dateNotes: [],      // short calendar labels ("Mom flies home") -- own plus any shared with the current user
   monthThemes: {}, monthThemesReady: false,               // own per-month background overrides, one Firestore doc each (private)
@@ -173,7 +174,7 @@ const Store = {
   startSync(userId) {
     this.stopSync();
     const db = firebase.firestore();
-    const pending = new Set(['accounts', 'connections-a', 'connections-b', 'households', 'events', 'categories', 'views', 'editTrust', 'notes', 'preferences', 'birthdays', 'birthdayNotes', 'dateNotes', 'viewers', 'monthThemes', 'plannerMonthThemes']);
+    const pending = new Set(['accounts', 'connections-a', 'connections-b', 'households', 'events', 'categories', 'views', 'editTrust', 'notes', 'preferences', 'birthdays', 'birthdayNotes', 'dateNotes', 'viewers', 'noteLooks', 'monthThemes', 'plannerMonthThemes']);
     // Just what the calendar needs to draw itself correctly (people, events,
     // filters, colors/theme). main.js shows the calendar as soon as these
     // are in; the rest (notes, birthdays, date notes, backgrounds) fill in
@@ -319,6 +320,21 @@ const Store = {
       }
     ));
 
+    // Your own look for shared lists (see getNoteLook) -- private, one doc
+    // per (you, list), so a background photo only you picked never touches
+    // the shared list or anyone else's view of it.
+    _unsubscribers.push(db.collection('noteLooks').where('uid', '==', userId).onSnapshot(
+      snap => {
+        _cache.noteLooks = {};
+        snap.docs.forEach(d => { const data = d.data(); _cache.noteLooks[data.noteId] = data; });
+        settle('noteLooks'); notify();
+      },
+      err => {
+        console.warn('Note looks sync failed:', err.code);
+        settle('noteLooks'); notify();
+      }
+    ));
+
     // Viewer grants (one doc per viewer+person they view). Readable by every
     // signed-in user, like households -- saving an event needs to know the
     // viewers of EVERY participant, not just your own.
@@ -391,7 +407,7 @@ const Store = {
     _cache.accounts = []; _cache.connections = []; _cache.households = [];
     _cache.events = []; _cache.categories = []; _cache.views = []; _cache.editTrust = [];
     _cache.notes = []; _cache.preferences = {};
-    _cache.birthdays = []; _cache.birthdayNotes = []; _cache.dateNotes = []; _cache.viewerGrants = [];
+    _cache.birthdays = []; _cache.birthdayNotes = []; _cache.dateNotes = []; _cache.viewerGrants = []; _cache.noteLooks = {};
     _cache.monthThemes = {}; _cache.monthThemesReady = false;
     _cache.plannerMonthThemes = {}; _cache.plannerMonthThemesReady = false;
   },
@@ -1508,6 +1524,31 @@ const Store = {
   getNotes() {
     return _cache.notes;
   },
+  // ---- per-person look for shared lists: once a list is shared, any
+  // change to its background color/photo or text color is saved just for
+  // whoever made it (creator included) -- the list itself keeps the look
+  // it had when it was first shared, which is what everyone else sees
+  // until they pick their own. ----
+  getNoteLook(noteId) {
+    return _cache.noteLooks[noteId] || null;
+  },
+  effectiveNoteLook(note) {
+    const mine = this.getNoteLook(note.id);
+    const src = mine || note;
+    return { bgColor: src.bgColor || null, textColor: src.textColor || null, textColorManual: !!src.textColorManual, bgPhoto: src.bgPhoto || null };
+  },
+  setMyNoteLook(noteId, look) {
+    const me = this.getCurrentUserId();
+    const doc = { uid: me, noteId, bgColor: look.bgColor || null, textColor: look.textColor || null, textColorManual: !!look.textColorManual, bgPhoto: look.bgPhoto || null };
+    _cache.noteLooks[noteId] = doc;
+    firebase.firestore().collection('noteLooks').doc(`${me}_${noteId}`).set(doc)
+      .catch(err => console.warn('Saving your list look failed:', err.code));
+  },
+  clearMyNoteLook(noteId) {
+    const me = this.getCurrentUserId();
+    delete _cache.noteLooks[noteId];
+    firebase.firestore().collection('noteLooks').doc(`${me}_${noteId}`).delete().catch(() => {});
+  },
   addNote(note) {
     const id = note.id || uid();
     const visibleTo = Array.from(new Set([note.ownerId, ...(note.sharedWith || [])]));
@@ -1526,6 +1567,7 @@ const Store = {
     firebase.firestore().collection('notes').doc(id).set(merged);
   },
   deleteNote(id) {
+    if (_cache.noteLooks[id]) this.clearMyNoteLook(id);
     _cache.notes = _cache.notes.filter(n => n.id !== id);
     firebase.firestore().collection('notes').doc(id).delete();
   },

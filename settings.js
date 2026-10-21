@@ -327,6 +327,7 @@ const Settings = {
           <input type="text" id="st-household-name" placeholder="Household name">
           <button class="btn" id="st-create-household">Create</button>
         </div>
+        <div id="st-viewers" style="margin-top:14px;"></div>
       </div>
 
       <div class="settings-section">
@@ -595,6 +596,9 @@ const Settings = {
         const householdMemberIds = new Set(
           Store.getHouseholdsFor(userId).flatMap(h => h.memberIds).filter(id => id !== userId)
         );
+        // Viewer ties are managed in Household -> Viewers instead, for the same reason.
+        Store.viewersOf(userId).forEach(id => householdMemberIds.add(id));
+        Store.viewedBy(userId).forEach(id => householdMemberIds.add(id));
         Store.getKnownPeople(userId).filter(p => p.id !== userId && !householdMemberIds.has(p.id)).forEach(p => {
           const row = document.createElement('div');
           row.className = 'color-swatch-row';
@@ -750,6 +754,92 @@ const Settings = {
         });
       }
       renderHouseholds();
+
+      // Viewers: people (e.g. a parent) who can see chosen household
+      // members' shared events but can't change them -- see Store.viewersOf.
+      function renderViewers() {
+        const el = root.querySelector('#st-viewers');
+        const nameOf = id => (Store.getAccount(id) || {}).name || '?';
+        const circle = new Set([userId]);
+        Store.getHouseholdsFor(userId).forEach(h => h.memberIds.forEach(id => circle.add(id)));
+        const grants = Store.getViewerGrants().filter(g => circle.has(g.ofUid) && g.viewerId !== userId);
+        const byViewer = new Map();
+        grants.forEach(g => byViewer.set(g.viewerId, [...(byViewer.get(g.viewerId) || []), g.ofUid]));
+        const iView = Store.viewedBy(userId);
+        el.innerHTML = `
+          <p style="font-weight:500;margin:0 0 2px;">Viewers</p>
+          <p class="muted" style="margin:0 0 6px;">Viewers can see the shared events of the people you pick, but can't change anything. Those people can add appointments to the viewer's calendar for them.</p>
+          ${iView.length ? `<p class="muted" style="margin:0 0 6px;">You're a viewer of ${escapeHTML(iView.map(nameOf).join(', '))}.</p>` : ''}
+          <div id="st-viewers-list"></div>
+          ${circle.size > 1 ? '<button type="button" class="link-btn" id="st-invite-viewer">Invite a viewer</button>' : ''}
+        `;
+        const listEl = el.querySelector('#st-viewers-list');
+        byViewer.forEach((ofIds, viewerId) => {
+          const row = document.createElement('div');
+          row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;padding:2px 0;';
+          row.innerHTML = `
+            <span style="min-width:0;">${escapeHTML(nameOf(viewerId))} <span class="muted">sees ${escapeHTML(ofIds.map(id => id === userId ? 'you' : nameOf(id)).join(', '))}</span></span>
+            <button type="button" class="link-btn" style="color:var(--text-danger,#c0392b);flex-shrink:0;">Remove</button>
+          `;
+          row.querySelector('button').addEventListener('click', () => {
+            if (!confirm(`Remove ${nameOf(viewerId)} as a viewer? They'll stop seeing these calendars.`)) return;
+            Store.removeViewer(viewerId);
+            renderViewers();
+            Calendar.render();
+          });
+          listEl.appendChild(row);
+        });
+        const inviteBtn = el.querySelector('#st-invite-viewer');
+        if (inviteBtn) inviteBtn.addEventListener('click', () => openViewerInvite(Array.from(circle)));
+        // Not in a household and nobody to show: skip the section entirely.
+        if (circle.size <= 1 && !iView.length && !byViewer.size) el.innerHTML = '';
+      }
+      renderViewers();
+
+      function openViewerInvite(circleIds) {
+        const people = circleIds.map(id => Store.getAccount(id)).filter(Boolean)
+          .sort((a, b) => (a.id === userId ? -1 : b.id === userId ? 1 : 0));
+        openModal(`
+          <div class="modal-header"><h2>Invite a viewer</h2><button class="modal-close" id="vi-close">${icon('x')}</button></div>
+          <p class="muted" style="margin-top:0;">Whose calendars can they see?</p>
+          <div id="vi-people">
+            ${people.map(p => `<label class="checkbox-row" style="display:flex;gap:8px;align-items:center;margin:6px 0;"><input type="checkbox" value="${p.id}" ${p.id === userId ? 'checked' : ''}> ${escapeHTML(p.name)}${p.id === userId ? ' (you)' : ''}</label>`).join('')}
+          </div>
+          <button class="btn btn-primary" id="vi-create" style="width:100%;margin-top:10px;">Create invite link</button>
+          <div id="vi-result" class="hidden" style="margin-top:12px;">
+            <p class="muted" style="margin:0 0 6px;">Send this link to them:</p>
+            <div class="field-row">
+              <input type="text" id="vi-link" readonly style="flex:1;">
+              <button class="btn" id="vi-copy">Copy</button>
+            </div>
+            <p class="muted hidden" id="vi-copied" style="margin:6px 0 0;">Copied.</p>
+          </div>
+        `, r => {
+          const close = () => { closeModal(); Settings.openModal(); };
+          r.querySelector('#vi-close').addEventListener('click', close);
+          r.querySelector('#vi-create').addEventListener('click', async e => {
+            const viewOf = Array.from(r.querySelectorAll('#vi-people input:checked')).map(cb => cb.value);
+            if (!viewOf.length) return;
+            e.target.disabled = true;
+            try {
+              const code = await Store.createViewerInvite(userId, viewOf);
+              r.querySelector('#vi-link').value = inviteUrl(code);
+              r.querySelector('#vi-result').classList.remove('hidden');
+              r.querySelectorAll('#vi-people input').forEach(cb => { cb.disabled = true; });
+              e.target.classList.add('hidden');
+            } catch (err) {
+              e.target.disabled = false;
+              alert("Couldn't create the link -- check your connection and try again.");
+            }
+          });
+          r.querySelector('#vi-copy').addEventListener('click', () => {
+            const input = r.querySelector('#vi-link');
+            copyToClipboard(input.value);
+            input.select();
+            r.querySelector('#vi-copied').classList.remove('hidden');
+          });
+        });
+      }
 
       root.querySelector('#st-create-household').addEventListener('click', () => {
         const nameInput = root.querySelector('#st-household-name');

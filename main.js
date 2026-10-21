@@ -178,6 +178,7 @@ const App = {
       Store.migrateLocalBirthdaysIfNeeded(user.uid);
       Store.claimLegacyCategoriesIfNeeded(user.uid);
       Store.reconcileHouseholdTies(user.uid);
+      Store.reconcileViewerAccess(user.uid);
       Store.cleanupCheckedItems();
     });
     Store.onDataChange(() => {
@@ -341,6 +342,10 @@ const App = {
     } else if (invite.type === 'household_member' || invite.type === 'household_connect') {
       const h = Store.getHouseholds().find(h => h.id === invite.householdId);
       description = `Join the household "${h ? h.name : ''}"? You'll be able to see everyone's calendar, and they'll see yours.`;
+    } else if (invite.type === 'viewer') {
+      const names = (invite.viewOf || []).map(id => (Store.getAccount(id) || {}).name).filter(Boolean);
+      const list = names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}` : (names[0] || 'them');
+      description = `${(Store.getAccount(invite.ownerId) || {}).name || 'Someone'} invited you to see ${list}'s calendar${names.length > 1 ? 's' : ''}. You'll see their shared events but can't change them, and ${list} can add appointments to your calendar for you.`;
     }
 
     openModal(`
@@ -354,9 +359,15 @@ const App = {
       root.querySelector('#inv-close').addEventListener('click', closeModal);
       root.querySelector('#inv-decline').addEventListener('click', closeModal);
       root.querySelector('#inv-accept').addEventListener('click', async () => {
-        await Store.acceptInvite(code, userId);
+        const result = await Store.acceptInvite(code, userId);
         closeModal();
         Calendar.render();
+        if (result && !result.ok) {
+          openModal(`
+            <div class="modal-header"><h2>Invite</h2><button class="modal-close" id="inv-close">${icon('x')}</button></div>
+            <p class="muted">${escapeHTML(result.reason)}</p>
+          `, r => r.querySelector('#inv-close').addEventListener('click', closeModal));
+        }
       });
     });
   },

@@ -452,9 +452,11 @@ const Calendar = {
     const defaultColor = Store.getDefaultBirthdayColor(userId) || HOLIDAY_COLOR;
     const bdIcon = Store.getBirthdayIcon(userId);
     const iconPrefix = bdIcon ? `${bdIcon} ` : '';
+    const hiddenBirthdays = Store.getHiddenBirthdays(userId);
     return peopleIds
       .flatMap(ownerId => Store.getBirthdays(ownerId).map(b => ({ ...b, ownerId })))
       .filter(b => b.month === m && b.day === d)
+      .filter(b => !hiddenBirthdays.includes(b.id))
       // Once this occurrence has been tapped and enriched, a real event
       // with this exact id exists -- that event represents it from now on
       // (with real notes/location/participants/etc.), so stop generating
@@ -3021,7 +3023,7 @@ const Calendar = {
         ].filter(Boolean).join('');
         const participantNames = (ev.participantIds || [ev.ownerId]).map(id => (Store.getPerson(id) || {}).name).filter(Boolean).join(', ');
         row.innerHTML = `
-          ${(ev.isBirthday || ev.isHoliday) ? '' : `<button type="button" class="drag-handle" aria-label="Reorder event">${icon('grip')}</button>`}
+          ${(ev.isBirthday || ev.isHoliday || !Store.canEditEvent(ev)) ? '' : `<button type="button" class="drag-handle" aria-label="Reorder event">${icon('grip')}</button>`}
           <button type="button" class="day-view-row-open">
             <div class="day-view-row-main">
               <span${color ? ` style="color:${color};"` : ''}>${escapeHTML(ev.title)}</span>${badges ? `<span class="day-view-row-badges">${badges}</span>` : ''}${timeLabel ? `<span class="muted" style="margin-left:auto;">${timeLabel}</span>` : ''}
@@ -3252,10 +3254,21 @@ const Calendar = {
           const owner = Store.getPerson(b.ownerId);
           const row = document.createElement('div');
           row.className = 'menu-item-row birthday-row';
+          const isHidden = Store.getHiddenBirthdays(userId).includes(b.id);
           row.innerHTML = `
             <input type="color" class="bd-personal-color" value="${resolvedColor(b)}" aria-label="Your color for ${escapeAttr(b.name)}'s birthday">
-            <span class="menu-item" style="cursor:default;">${escapeHTML(b.name)} - ${MONTH_NAMES[b.month - 1]} ${b.day}${b.year ? ', ' + b.year : ''}${owner ? ` <span class="muted">(${escapeHTML(owner.name)})</span>` : ''}</span>
+            <span class="menu-item" style="cursor:default;${isHidden ? 'opacity:0.45;' : ''}">${escapeHTML(b.name)} - ${MONTH_NAMES[b.month - 1]} ${b.day}${b.year ? ', ' + b.year : ''}${owner ? ` <span class="muted">(${escapeHTML(owner.name)})</span>` : ''}</span>
+            ${isHidden
+              ? `<button type="button" class="link-btn bd-hide-toggle" style="flex-shrink:0;">Show</button>`
+              : `<button type="button" class="icon-btn bd-hide-toggle" aria-label="Hide ${escapeAttr(b.name)}'s birthday from my calendar">${icon('x')}</button>`}
           `;
+          // Hides it from YOUR calendar only -- the birthday stays for
+          // everyone else, and "Show" brings it back.
+          row.querySelector('.bd-hide-toggle').addEventListener('click', () => {
+            Store.setBirthdayHidden(userId, b.id, !isHidden);
+            renderSharedList();
+            Calendar.render();
+          });
           row.querySelector('.bd-personal-color').addEventListener('input', e => {
             Store.setBirthdayColor(userId, b.id, e.target.value);
             Calendar.render();
@@ -3332,6 +3345,8 @@ const Calendar = {
     // New notes default to your household(s); change it per note.
     const householdIds = new Set();
     Store.getHouseholdsFor(userId).forEach(h => h.memberIds.forEach(id => householdIds.add(id)));
+    // ...plus anyone set up as a viewer of you (e.g. a parent), ticked by default too.
+    Store.viewersOf(userId).forEach(id => householdIds.add(id));
     const initialShared = note ? (note.visibleTo || []) : [...householdIds];
     let dateVal = note ? note.date : dateStr;
     let throughVal = note && note.endDate && note.endDate !== note.date ? note.endDate : null;
@@ -3503,7 +3518,7 @@ const Calendar = {
       <div class="modal-header">
         <h2>Event details</h2>
         <div style="display:flex; gap:4px;">
-          <button type="button" class="icon-btn" id="edv-edit" aria-label="Edit event">${icon('pencil')}</button>
+          ${Store.canEditEvent(event) ? `<button type="button" class="icon-btn" id="edv-edit" aria-label="Edit event">${icon('pencil')}</button>` : ''}
           <button type="button" class="modal-close" id="edv-close">${icon('x')}</button>
         </div>
       </div>
@@ -3513,7 +3528,8 @@ const Calendar = {
 
     openModal(body, root => {
       root.querySelector('#edv-close').addEventListener('click', closeModal);
-      root.querySelector('#edv-edit').addEventListener('click', () => {
+      const editBtn = root.querySelector('#edv-edit');
+      if (editBtn) editBtn.addEventListener('click', () => {
         closeModal();
         this.openEventModal(event, dateStr);
       });
@@ -3528,7 +3544,7 @@ const Calendar = {
     // picked, since a plain connection is visibility-only. Always includes
     // the event's current owner even if edit-trust was since revoked, so
     // editing an existing event never silently misrepresents who it's set to.
-    const editablePeople = people.filter(p => p.id === userId || Store.isEditTrusted(p.id));
+    const editablePeople = people.filter(p => Store.canEditCalendarOf(p.id));
     if (event && !editablePeople.some(p => p.id === event.ownerId)) {
       const currentOwner = Store.getAccount(event.ownerId);
       if (currentOwner) editablePeople.push(currentOwner);

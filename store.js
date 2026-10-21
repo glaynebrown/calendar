@@ -55,6 +55,7 @@ const _cache = {
   preferences: {}, // the CURRENT signed-in user's own synced appearance settings (private)
   birthdays: [],      // own birthdays plus any shared with the current user (see the `visibleTo` note below)
   birthdayNotes: [],  // the CURRENT signed-in user's own private gift-idea notes only (private)
+  viewerGrants: [],   // who views whom: { viewerId, ofUid, createdBy } -- see viewersOf/canEditCalendarOf
   dateNotes: [],      // short calendar labels ("Mom flies home") -- own plus any shared with the current user
   monthThemes: {}, monthThemesReady: false,               // own per-month background overrides, one Firestore doc each (private)
   plannerMonthThemes: {}, plannerMonthThemesReady: false,  // same, for the planner's own override tier (private)
@@ -111,6 +112,11 @@ function computeVisibleTo(ownerId, participantIds, visibility, customPeople) {
   Store.getHouseholdsFor(ownerId).forEach(h => h.memberIds.forEach(id => ids.add(id)));
   participantIds.forEach(pid => {
     if (pid === currentUserId) Store.getConnectedIds(pid).forEach(id => ids.add(id));
+    // Viewers (see Store.viewersOf): anyone set up to view a participant
+    // sees it, and an event FOR a viewer reaches the people who look after
+    // their calendar -- so "Bella adds Mom's appointment" shows for Nick too.
+    Store.viewersOf(pid).forEach(id => ids.add(id));
+    Store.viewedBy(pid).forEach(id => ids.add(id));
   });
   return Array.from(ids);
 }
@@ -146,6 +152,7 @@ function computeBirthdayVisibleTo(ownerId, shared) {
   if (!shared) return [ownerId];
   const ids = new Set([ownerId]);
   Store.getHouseholdsFor(ownerId).forEach(h => h.memberIds.forEach(id => ids.add(id)));
+  Store.viewersOf(ownerId).forEach(id => ids.add(id));
   return Array.from(ids);
 }
 
@@ -166,12 +173,12 @@ const Store = {
   startSync(userId) {
     this.stopSync();
     const db = firebase.firestore();
-    const pending = new Set(['accounts', 'connections-a', 'connections-b', 'households', 'events', 'categories', 'views', 'editTrust', 'notes', 'preferences', 'birthdays', 'birthdayNotes', 'dateNotes', 'monthThemes', 'plannerMonthThemes']);
+    const pending = new Set(['accounts', 'connections-a', 'connections-b', 'households', 'events', 'categories', 'views', 'editTrust', 'notes', 'preferences', 'birthdays', 'birthdayNotes', 'dateNotes', 'viewers', 'monthThemes', 'plannerMonthThemes']);
     // Just what the calendar needs to draw itself correctly (people, events,
     // filters, colors/theme). main.js shows the calendar as soon as these
     // are in; the rest (notes, birthdays, date notes, backgrounds) fill in
     // live a moment later instead of holding up the whole first screen.
-    const essential = new Set(['accounts', 'connections-a', 'connections-b', 'households', 'events', 'categories', 'views', 'editTrust', 'preferences']);
+    const essential = new Set(['accounts', 'connections-a', 'connections-b', 'households', 'events', 'categories', 'views', 'editTrust', 'preferences', 'viewers']);
     let resolveReady, resolveEssentials;
     const ready = new Promise(res => { resolveReady = res; });
     this.essentialsReady = new Promise(res => { resolveEssentials = res; });
@@ -312,6 +319,20 @@ const Store = {
       }
     ));
 
+    // Viewer grants (one doc per viewer+person they view). Readable by every
+    // signed-in user, like households -- saving an event needs to know the
+    // viewers of EVERY participant, not just your own.
+    _unsubscribers.push(db.collection('viewers').onSnapshot(
+      snap => {
+        _cache.viewerGrants = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        settle('viewers'); notify();
+      },
+      err => {
+        console.warn('Viewers sync failed:', err.code);
+        settle('viewers'); notify();
+      }
+    ));
+
     // Date notes -- short labels on the calendar that aren't events (see
     // getDateNotesForDate). Same visibleTo pattern and same settle-on-error
     // as notes above, so a rules-deploy gap can't hang the app.
@@ -370,7 +391,7 @@ const Store = {
     _cache.accounts = []; _cache.connections = []; _cache.households = [];
     _cache.events = []; _cache.categories = []; _cache.views = []; _cache.editTrust = [];
     _cache.notes = []; _cache.preferences = {};
-    _cache.birthdays = []; _cache.birthdayNotes = []; _cache.dateNotes = [];
+    _cache.birthdays = []; _cache.birthdayNotes = []; _cache.dateNotes = []; _cache.viewerGrants = [];
     _cache.monthThemes = {}; _cache.monthThemesReady = false;
     _cache.plannerMonthThemes = {}; _cache.plannerMonthThemesReady = false;
   },
@@ -475,9 +496,9 @@ const Store = {
   },
   // Visibility only -- does NOT grant edit access (see addEditTrust, which
   // only households grant).
-  addConnection(a, b) {
+  addConnection(a, b, extra) {
     if (a === b || this.isConnected(a, b)) return;
-    const conn = { a, b, createdAt: Date.now() };
+    const conn = { a, b, createdAt: Date.now(), ...(extra || {}) };
     _cache.connections.push(conn);
     firebase.firestore().collection('connections').doc(connectionDocId(a, b)).set(conn);
   },
@@ -508,6 +529,108 @@ const Store = {
   },
   getEditTrustedIds() {
     return _cache.editTrust;
+  },
+
+  // ---- viewers: someone (e.g. a parent) who can SEE chosen household
+  // members' shared events but never change them. One-way the other way
+  // round: the people they view can add/edit events on the viewer's own
+  // calendar (the viewer's editIndex lists them; theirs never lists the
+  // viewer). Granted only by accepting a 'viewer' invite link. ----
+  viewersOf(uid) {
+    return _cache.viewerGrants.filter(g => g.ofUid === uid).map(g => g.viewerId);
+  },
+  viewedBy(viewerId) {
+    return _cache.viewerGrants.filter(g => g.viewerId === viewerId).map(g => g.ofUid);
+  },
+  getViewerGrants() {
+    return _cache.viewerGrants;
+  },
+  // Whose calendar the current user may add/edit events on. Household
+  // edit-trust is mutual, so editIndex alone answered this before; a
+  // viewer's editIndex lists the people they view, which must NOT let the
+  // viewer edit those people's events -- hence the viewer checks first.
+  canEditCalendarOf(otherId) {
+    const me = this.getCurrentUserId();
+    if (!otherId || otherId === me) return true;
+    if (_cache.viewerGrants.some(g => g.viewerId === otherId && g.ofUid === me)) return true;
+    if (_cache.viewerGrants.some(g => g.viewerId === me && g.ofUid === otherId)) return false;
+    return this.isEditTrusted(otherId);
+  },
+  canEditEvent(ev) {
+    return this.canEditCalendarOf(ev.ownerId);
+  },
+  async createViewerInvite(ownerId, viewOf) {
+    const code = uid();
+    await firebase.firestore().collection('invites').doc(code)
+      .set({ type: 'viewer', ownerId, viewOf, householdId: null, revoked: false, createdAt: Date.now() });
+    return code;
+  },
+  // Removes `viewerId` as a viewer of every household person the current
+  // user can act for, strips them from those people's events (they stay on
+  // events they're actually ON), and drops the current user's own tie to
+  // them. Other people's connection to the viewer is cleaned up by their
+  // own device next time it opens (see reconcileViewerAccess).
+  removeViewer(viewerId) {
+    const me = this.getCurrentUserId();
+    const db = firebase.firestore();
+    const grants = _cache.viewerGrants.filter(g => g.viewerId === viewerId && this.canEditCalendarOf(g.ofUid));
+    const ofIds = new Set(grants.map(g => g.ofUid));
+    _cache.viewerGrants = _cache.viewerGrants.filter(g => !grants.includes(g));
+    grants.forEach(g => db.collection('viewers').doc(g.id).delete().catch(err => console.warn('Remove viewer failed', err.code)));
+    _cache.events.forEach(e => {
+      if (!(e.visibleTo || []).includes(viewerId) || e.ownerId === viewerId) return;
+      const pids = e.participantIds || [e.ownerId];
+      if (pids.includes(viewerId) || !pids.some(pid => ofIds.has(pid)) || !this.canEditEvent(e)) return;
+      this.updateEvent(e.id, { visibleTo: e.visibleTo.filter(id => id !== viewerId) });
+    });
+    const conn = _cache.connections.find(c => (c.a === me && c.b === viewerId) || (c.a === viewerId && c.b === me));
+    if (conn && conn.viaViewer && !_cache.viewerGrants.some(g => g.viewerId === viewerId && g.ofUid === me)) this.removeConnection(me, viewerId);
+    if (!_cache.viewerGrants.some(g => g.viewerId === viewerId && g.ofUid === me)) {
+      db.collection('editIndex').doc(viewerId).update({ ids: firebase.firestore.FieldValue.arrayRemove(me) }).catch(() => {});
+    }
+    _cache.birthdays.filter(b => b.ownerId === me && b.shared).forEach(b => this.updateBirthday(me, b.id, { shared: true }));
+  },
+  // Every sign-in, quietly brings viewer access up to date:
+  //  - adds viewers to upcoming shared events/birthdays they should see
+  //    (covers events from before they joined -- a viewer's own device
+  //    can't do this, since they can't edit anyone else's events)
+  //  - drops leftover ties once a viewer has been removed (connections
+  //    created by the viewer link, and the viewer's own edit grants).
+  reconcileViewerAccess(userId) {
+    const todayStr = formatISO(new Date());
+    _cache.events.forEach(e => {
+      if (e.visibility !== 'shared' || !this.canEditEvent(e)) return;
+      const want = new Set();
+      (e.participantIds || [e.ownerId]).forEach(pid => {
+        this.viewersOf(pid).forEach(id => want.add(id));
+        this.viewedBy(pid).forEach(id => want.add(id));
+      });
+      const missing = [...want].filter(id => !(e.visibleTo || []).includes(id));
+      if (!missing.length || !eventHasUpcomingRelevance(e, todayStr)) return;
+      this.updateEvent(e.id, { visibleTo: Array.from(new Set([...(e.visibleTo || []), ...missing])) });
+    });
+    _cache.birthdays.filter(b => b.ownerId === userId && b.shared).forEach(b => {
+      const want = computeBirthdayVisibleTo(userId, true);
+      const have = b.visibleTo || [];
+      if (want.length !== have.length || want.some(id => !have.includes(id))) this.updateBirthday(userId, b.id, { shared: true });
+    });
+    _cache.connections.filter(c => c.viaViewer && (c.a === userId || c.b === userId)).forEach(c => {
+      const other = c.a === userId ? c.b : c.a;
+      const stillTied = _cache.viewerGrants.some(g => (g.viewerId === other && g.ofUid === userId) || (g.viewerId === userId && g.ofUid === other));
+      if (!stillTied) this.removeConnection(userId, other);
+    });
+    const helpers = this._pref('viewerHelpers') || [];
+    const stale = helpers.filter(id => !_cache.viewerGrants.some(g => g.viewerId === userId && g.ofUid === id));
+    if (stale.length) {
+      const coMembers = new Set(this.getHouseholdsFor(userId).flatMap(h => h.memberIds));
+      const toDrop = stale.filter(id => !coMembers.has(id));
+      if (toDrop.length) {
+        firebase.firestore().collection('editIndex').doc(userId)
+          .update({ ids: firebase.firestore.FieldValue.arrayRemove(...toDrop) }).catch(() => {});
+        _cache.editTrust = _cache.editTrust.filter(id => !toDrop.includes(id));
+      }
+      this._syncPref(userId, 'viewerHelpers', helpers.filter(id => !stale.includes(id)));
+    }
   },
   addEditTrust(a, b) {
     if (a === b) return;
@@ -706,6 +829,32 @@ const Store = {
       });
       this.addHouseholdMember(invite.householdId, acceptingUserId);
       return { ok: true, connectedTo: others, joinedHousehold: invite.householdId };
+    }
+    // Viewer: can see the chosen people's shared events, can't change
+    // them; those people (and only them) get to add/edit events on the
+    // viewer's own calendar. Grants are written first -- the security
+    // rules check them against this invite -- then the visibility ties.
+    if (invite.type === 'viewer') {
+      const ofIds = (invite.viewOf || []).filter(id => id !== acceptingUserId);
+      if (!ofIds.length) return { ok: false, reason: 'This invite link is no longer valid.' };
+      const db = firebase.firestore();
+      try {
+        await Promise.all(ofIds.map(ofUid => {
+          const grant = { viewerId: acceptingUserId, ofUid, createdBy: invite.ownerId, inviteCode: code, createdAt: Date.now() };
+          const id = `${acceptingUserId}_${ofUid}`;
+          if (!_cache.viewerGrants.some(g => g.id === id)) _cache.viewerGrants.push({ id, ...grant });
+          return db.collection('viewers').doc(id).set(grant);
+        }));
+      } catch (err) {
+        console.warn('Viewer accept failed:', err.code);
+        return { ok: false, reason: "Couldn't accept this invite -- check your connection and try again." };
+      }
+      ofIds.forEach(ofUid => this.addConnection(ofUid, acceptingUserId, { viaViewer: true }));
+      await db.collection('editIndex').doc(acceptingUserId)
+        .set({ ids: firebase.firestore.FieldValue.arrayUnion(...ofIds) }, { merge: true }).catch(() => {});
+      ofIds.forEach(id => { if (!_cache.editTrust.includes(id)) _cache.editTrust.push(id); });
+      this._syncPref(acceptingUserId, 'viewerHelpers', Array.from(new Set([...(this._pref('viewerHelpers') || []), ...ofIds])));
+      return { ok: true, connectedTo: ofIds, viewer: true };
     }
     return { ok: false, reason: 'Unknown invite type.' };
   },
@@ -1012,6 +1161,21 @@ const Store = {
   setShowWishlists(userId, val) {
     localStorage.setItem(`fc_showWishlists_${userId}`, val ? '1' : '0');
     this._syncPref(userId, 'showWishlists', !!val);
+  },
+  // Birthdays someone else shared that you've hidden from your own
+  // calendar (the × in Settings -> Birthdays -> Shared with you). Only
+  // affects you; the birthday itself is untouched.
+  getHiddenBirthdays(userId) {
+    const synced = this._pref('hiddenBirthdays');
+    if (synced !== undefined) return synced || [];
+    return readJSON(`fc_hiddenBirthdays_${userId}`, []);
+  },
+  setBirthdayHidden(userId, birthdayId, hidden) {
+    const cur = new Set(this.getHiddenBirthdays(userId));
+    if (hidden) cur.add(birthdayId); else cur.delete(birthdayId);
+    const list = Array.from(cur);
+    writeJSON(`fc_hiddenBirthdays_${userId}`, list);
+    this._syncPref(userId, 'hiddenBirthdays', list);
   },
   // Whether date notes show on the calendar at all -- the on/off switch in
   // the Month/Week/Day view menu. Per-viewer, on by default.

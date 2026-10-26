@@ -181,6 +181,14 @@ const App = {
       Store.reconcileViewerAccess(user.uid);
       Store.migrateLegacyEventColors(user.uid);
       Store.cleanupCheckedItems();
+      this.checkReminderAcks();
+    });
+    // Coming back to the app (e.g. from tapping a repeat reminder) asks
+    // again for anything not marked "Got it" yet, even if it was closed.
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'visible') return;
+      this.skippedAcks.clear();
+      this.checkReminderAcks();
     });
     Store.onDataChange(() => {
       // Re-applies the theme on every cache update, not just ones that
@@ -197,6 +205,7 @@ const App = {
       // would otherwise get silently wiped the moment any data changed
       // while sitting on the Notes tab, with nothing to put it back.
       applyTheme(Store.getTheme());
+      this.checkReminderAcks();
       if (this.activeTab === 'calendar-tab') Calendar.render();
       else {
         applyBackgroundForMonth(Calendar.getRelevantMonthIndex());
@@ -369,6 +378,45 @@ const App = {
             <p class="muted">${escapeHTML(result.reason)}</p>
           `, r => r.querySelector('#inv-close').addEventListener('click', closeModal));
         }
+      });
+    });
+  },
+
+  // Repeat reminders (Settings -> "Keep reminding me until I tap Got it")
+  // keep coming until they're marked seen here. Shown whenever the app has
+  // nothing else open; closing it without "Got it" only hides it until the
+  // app is next opened.
+  skippedAcks: new Set(),
+  checkReminderAcks() {
+    const userId = Store.getCurrentUserId();
+    if (!userId || document.getElementById('modal-root').innerHTML) return;
+    const pending = Store.getPendingReminderAcks(userId).filter(p => !this.skippedAcks.has(p.key + p.event.id));
+    if (!pending.length) return;
+    const when = p => {
+      const d = parseISO(p.occDate);
+      const day = formatISO(new Date()) === p.occDate ? 'Today'
+        : formatISO(addToDate(new Date(), 'daily', 1)) === p.occDate ? 'Tomorrow'
+        : d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+      if (!p.event.time) return day;
+      const [hh, mm] = p.event.time.split(':').map(Number);
+      return `${day} at ${hh % 12 || 12}:${String(mm).padStart(2, '0')} ${hh >= 12 ? 'PM' : 'AM'}`;
+    };
+    openModal(`
+      <div class="modal-header"><h2>Reminder</h2><button class="modal-close" id="ack-close" aria-label="Close">${icon('x')}</button></div>
+      ${pending.map(p => `
+        <div class="reminder-ack-item">
+          <div class="reminder-ack-title">${escapeHTML(p.event.title || 'Reminder')}</div>
+          <div class="muted">${escapeHTML(when(p))}</div>
+        </div>`).join('')}
+      <button class="btn btn-primary" id="ack-got-it" style="width:100%;margin-top:14px;font-size:17px;padding:14px;">Got it</button>
+    `, root => {
+      const skip = () => { pending.forEach(p => this.skippedAcks.add(p.key + p.event.id)); closeModal(); };
+      root.querySelector('#ack-close').addEventListener('click', skip);
+      root.querySelector('#modal-backdrop').addEventListener('click', e => { if (e.target.id === 'modal-backdrop') pending.forEach(p => this.skippedAcks.add(p.key + p.event.id)); });
+      root.querySelector('#ack-got-it').addEventListener('click', () => {
+        pending.forEach(p => Store.ackReminder(p.event.id, p.key));
+        closeModal();
+        Calendar.render();
       });
     });
   },

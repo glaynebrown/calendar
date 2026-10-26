@@ -757,6 +757,10 @@ html.has-text-override .bottom-tab.active {
 .st-row-profile .st-profile-avatar { width: 40px; height: 40px; font-size: 14px; }
 .st-row-profile .st-row-label > span:first-child { font-weight: 500; }
 .st-row-switch { cursor: default; }
+.st-row-indent { padding-left: 54px; font-size: 14px; }
+.reminder-ack-item { padding: 10px 0; border-bottom: 0.5px solid var(--border); }
+.reminder-ack-item:last-of-type { border-bottom: none; }
+.reminder-ack-title { font-weight: 600; font-size: 16px; }
 .st-row-switch .switch { flex-shrink: 0; }
 /* Settings keeps one tall size on every page, so a short page isn't a thin strip */
 .modal-sheet.st-sheet { height: 85vh; max-height: 85vh; }

@@ -1027,6 +1027,32 @@ const Store = {
       : { [field]: minutes, hasReminders: true };
     firebase.firestore().collection('events').doc(eventId).update(update);
   },
+  // "Got it" on a repeat reminder (see scripts/send-reminders.js) -- stops
+  // the repeats for that one reminder. Targeted update like setMyReminder,
+  // so anyone who can see the event can mark their OWN reminder as seen.
+  ackReminder(eventId, key) {
+    const idx = _cache.events.findIndex(e => e.id === eventId);
+    if (idx >= 0) {
+      _cache.events[idx] = { ..._cache.events[idx], ackReminders: { ...(_cache.events[idx].ackReminders || {}), [key]: true } };
+    }
+    firebase.firestore().collection('events').doc(eventId)
+      .update({ [`ackReminders.${key}`]: true })
+      .catch(err => console.warn('Got it failed for', eventId, err.code));
+  },
+  // Repeat reminders of mine still waiting on "Got it": sent within the
+  // last 2 hours, not yet seen. [{ event, occDate, key }]
+  getPendingReminderAcks(userId) {
+    const cutoff = Date.now() - 2 * 60 * 60 * 1000;
+    const out = [];
+    _cache.events.forEach(e => {
+      Object.entries(e.sentReminders || {}).forEach(([key, v]) => {
+        if (!key.endsWith(`_${userId}`) || !v || typeof v !== 'object') return;
+        if ((e.ackReminders || {})[key] || !(v.first > cutoff)) return;
+        out.push({ event: e, occDate: key.slice(0, key.length - userId.length - 1), key });
+      });
+    });
+    return out;
+  },
   // Per-occurrence display order within one specific day, independent of
   // every other day this event might occur on -- a recurring event's
   // Monday position shouldn't drag its Tuesday position along with it (see

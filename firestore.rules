@@ -167,7 +167,8 @@ service cloud.firestore {
     //   change/delete only the ones they added (or, for events from before
     //   createdBy existed, if they're one of the old legacyEditors).
     // - anyone who can see it: may change only their own reminder/day order
-    //   (setMyReminder / setEventOrderForDate are targeted updates).
+    //   or tap "Got it" on a repeat reminder (setMyReminder /
+    //   setEventOrderForDate / ackReminder are targeted updates).
     // Nobody can rewrite createdBy, and a connection can't move an event
     // to someone else's calendar.
     match /events/{id} {
@@ -202,7 +203,7 @@ service cloud.firestore {
           )
         ) ||
         (request.auth.uid in resource.data.visibleTo
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reminders', 'hasReminders', 'orderByDate']))
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reminders', 'hasReminders', 'orderByDate', 'ackReminders']))
       );
       allow delete: if isSignedIn() && (
         (

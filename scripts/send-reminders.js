@@ -112,6 +112,11 @@ function formatReminderBody(event, occDate, timeZone) {
 // Retries a few times on Firestore's transient errors (UNAVAILABLE,
 // DEADLINE_EXCEEDED, etc) so a brief blip on Google's side doesn't fail the
 // whole run and send a failure email.
+// Repeat reminders (see "Keep reminding me until I tap Got it" in Settings).
+const MAX_REPEATS = 6;                     // the first one plus 5 repeats, about 30 minutes
+const REPEAT_GAP_MS = 4.5 * 60 * 1000;     // runs come every ~5 minutes; a little under so none get skipped
+const ALERT_AFTER_MS = 15 * 60 * 1000;     // then tell their connections, if they've turned that on
+
 async function withRetry(fn, tries = 3) {
   for (let attempt = 1; ; attempt++) {
     try {
@@ -183,6 +188,35 @@ async function main() {
   let sentCount = 0;
   let errorCount = 0;
 
+  // Sends one notification to every device a person has signed in on.
+  // Returns whether they had any device to send to.
+  async function sendTo(person, uid, title, body) {
+    const tokens = (person && person.deviceTokens) || [];
+    if (!tokens.length) return false;
+    await Promise.all(tokens.map(token =>
+      messaging.send({ token, notification: { title, body } }).catch(err => {
+        console.warn(`Failed to send to a token for ${uid}:`, err.message);
+      })
+    ));
+    return true;
+  }
+  // Only read when someone's connections actually need alerting.
+  let viewerGrants = null;
+  async function getViewerGrants() {
+    if (!viewerGrants) {
+      const snap = await withRetry(() => db.collection('viewers').get());
+      viewerGrants = snap.docs.map(d => d.data());
+    }
+    return viewerGrants;
+  }
+  async function getAccount(id) {
+    if (!accounts.has(id)) {
+      const snap = await withRetry(() => db.collection('accounts').doc(id).get());
+      if (snap.exists) accounts.set(id, snap.data());
+    }
+    return accounts.get(id);
+  }
+
   for (const doc of eventsSnap.docs) {
     // One bad or just-deleted event shouldn't fail the whole run -- anything
     // not marked sent here simply gets picked up again next run.
@@ -202,6 +236,16 @@ async function main() {
       if (!owner) continue;
       const timezone = owner.timezone || 'America/New_York';
 
+      // Entirely in the past (nothing from yesterday on, ever again) --
+      // stop reading it every run. Editing it back into the future in the
+      // app sets hasReminders again (see hasAnyReminders in store.js).
+      const farFutureStr = formatISO(new Date(now.getTime() + 2 * 366 * 24 * 60 * 60 * 1000));
+      if (expandOccurrences(event, rangeStartStr, farFutureStr).length === 0) {
+        await doc.ref.update({ hasReminders: false }, { lastUpdateTime: doc.updateTime })
+          .catch(() => {});
+        continue;
+      }
+
       const occurrences = expandOccurrences(event, rangeStartStr, lookaheadEnd);
       for (const occDate of occurrences) {
         const eventInstant = zonedTimeToUtc(occDate, event.time, timezone);
@@ -212,22 +256,57 @@ async function main() {
           if (dueAt < windowStart || dueAt > now) continue;
 
           const sentKey = `${occDate}_${uid}`;
-          if (event.sentReminders && event.sentReminders[sentKey]) continue;
+          const prev = (event.sentReminders || {})[sentKey];
+          // true = sent once, done (everyone without repeat reminders).
+          // An object = repeat reminders for someone with "Keep reminding
+          // me until I tap Got it" on: { n: times sent, first, last (ms),
+          // alerted: connections already told }. Stops once they tap Got
+          // it in the app (ackReminders) or after MAX_REPEATS.
+          if (prev === true) continue;
+          const acked = !!(event.ackReminders || {})[sentKey];
+          if (prev && acked) continue;
 
           const recipient = accounts.get(uid);
-          const tokens = (recipient && recipient.deviceTokens) || [];
-          if (tokens.length > 0) {
+          const recipientTz = (recipient && recipient.timezone) || timezone;
+          const repeat = !!(recipient && recipient.nagReminders);
+          const nowMs = now.getTime();
+          const dueToSend = !prev
+            || (repeat && prev.n < MAX_REPEATS && nowMs - prev.last >= REPEAT_GAP_MS);
+
+          if (dueToSend) {
             const title = event.title || 'Reminder';
-            const body = formatReminderBody(event, occDate, (recipient && recipient.timezone) || timezone);
-            await Promise.all(tokens.map(token =>
-              messaging.send({ token, notification: { title, body } }).catch(err => {
-                console.warn(`Failed to send to a token for ${uid}:`, err.message);
-              })
-            ));
-            sentCount++;
-            console.log(`Sent reminder for "${event.title}" (${occDate}) to ${uid}`);
+            const body = formatReminderBody(event, occDate, recipientTz);
+            if (await sendTo(recipient, uid, title, prev ? `${body} (tap to open, then Got it)` : body)) {
+              sentCount++;
+              console.log(`Sent reminder for "${event.title}" (${occDate}) to ${uid}${prev ? ` (repeat ${prev.n + 1})` : ''}`);
+            }
+            const next = repeat
+              ? { n: (prev ? prev.n : 0) + 1, first: prev ? prev.first : nowMs, last: nowMs, alerted: !!(prev && prev.alerted) }
+              : true;
+            await doc.ref.update({ [`sentReminders.${sentKey}`]: next });
+            if (!prev) continue;
           }
-          await doc.ref.update({ [`sentReminders.${sentKey}`]: true });
+
+          // Still not seen 15 minutes after the first one -- tell the people
+          // they're connected to, if they've turned that on.
+          if (repeat && !prev.alerted && recipient && recipient.alertConnections
+              && nowMs - prev.first >= ALERT_AFTER_MS) {
+            const grants = await getViewerGrants();
+            const helpers = new Set();
+            grants.forEach(g => {
+              if (g.viewerId === uid) helpers.add(g.ofUid);
+              if (g.ofUid === uid) helpers.add(g.viewerId);
+            });
+            helpers.delete(uid);
+            for (const helperId of helpers) {
+              const helper = await getAccount(helperId);
+              if (!helper) continue;
+              const body = `${event.title || 'An event'}, ${formatReminderBody(event, occDate, helper.timezone || recipientTz)}`;
+              if (await sendTo(helper, helperId, `${recipient.name || 'Someone'} hasn't seen a reminder`, body)) sentCount++;
+            }
+            console.log(`Alerted ${helpers.size} connection(s) for "${event.title}" (${occDate}), ${uid}`);
+            await doc.ref.update({ [`sentReminders.${sentKey}.alerted`]: true });
+          }
         }
       }
     } catch (err) {

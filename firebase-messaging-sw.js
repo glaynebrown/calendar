@@ -35,6 +35,18 @@ messaging.onBackgroundMessage(payload => {
   });
 });
 
+/* Tapping a reminder opens (or brings forward) the app, where any repeat
+   reminder still waiting shows its "Got it" box (see main.js). */
+self.addEventListener('notificationclick', event => {
+  event.notification.close();
+  event.waitUntil((async () => {
+    const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    const open = wins.find(w => w.url.startsWith(self.registration.scope));
+    if (open) return open.focus();
+    return self.clients.openWindow(self.registration.scope);
+  })());
+});
+
 /* ---- Offline app files ----
    Strategy, chosen so the manual ?v=NNN release routine needs NO extra step:
    - index.html: network first. Online, you always get the latest page (and

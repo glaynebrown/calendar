@@ -353,6 +353,20 @@ const Settings = {
               <span class="switch-track"></span>
             </span>
           </label>
+          <label class="st-row st-row-switch st-row-indent hidden" id="st-nag-row">
+            <span class="st-row-label">Keep reminding me until I tap Got it<span class="st-row-sub">Repeats every 5 minutes, up to 6 times</span></span>
+            <span class="switch">
+              <input type="checkbox" id="st-nag-toggle" ${me && me.nagReminders ? 'checked' : ''}>
+              <span class="switch-track"></span>
+            </span>
+          </label>
+          <label class="st-row st-row-switch st-row-indent hidden" id="st-alert-row">
+            <span class="st-row-label">Tell my connections if I haven't seen a reminder in 15 minutes</span>
+            <span class="switch">
+              <input type="checkbox" id="st-alert-toggle" ${me && me.alertConnections ? 'checked' : ''}>
+              <span class="switch-track"></span>
+            </span>
+          </label>
         </div>
       </div>
 
@@ -607,6 +621,22 @@ const Settings = {
       const notifStatus = root.querySelector('#st-notif-status');
       // The gray line under Notifications only shows when there's something
       // to explain -- the switch itself already says on or off.
+      // The repeat-reminder switches only make sense with notifications on
+      // here; the connections one only for people who have connections.
+      const nagToggle = root.querySelector('#st-nag-toggle');
+      const refreshNotifExtras = () => {
+        const on = notifToggle.checked;
+        root.querySelector('#st-nag-row').classList.toggle('hidden', !on);
+        root.querySelector('#st-alert-row').classList.toggle('hidden',
+          !on || !nagToggle.checked || !Store.connectionsOf(userId).length);
+      };
+      nagToggle.addEventListener('change', e => {
+        Store.updateAccount(userId, { nagReminders: e.target.checked });
+        refreshNotifExtras();
+      });
+      root.querySelector('#st-alert-toggle').addEventListener('change', e => {
+        Store.updateAccount(userId, { alertConnections: e.target.checked });
+      });
       const setNotifStatus = text => {
         notifStatus.textContent = text;
         notifStatus.classList.toggle('hidden', !text);
@@ -622,6 +652,7 @@ const Settings = {
           setNotifStatus("Blocked in your phone's settings. Allow notifications for this app there, then reopen Settings.");
         } else {
           notifToggle.checked = Notification.permission === 'granted';
+          refreshNotifExtras();
         }
       })();
       notifToggle.addEventListener('change', async e => {
@@ -646,6 +677,7 @@ const Settings = {
         } catch (err) {
           setNotifStatus(`Something went wrong: ${err.message}`);
         }
+        refreshNotifExtras();
       });
 
       root.querySelector('#st-default-calendar-view').addEventListener('change', e => {

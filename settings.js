@@ -334,11 +334,27 @@ const Settings = {
         <div class="st-group">
           ${navRow('people', 'users', 'People')}
           ${navRow('calendar', 'calendar', 'Calendar')}
-          ${navRow('birthdays', 'cake', 'Birthdays and holidays')}
+          <button type="button" class="st-row" id="st-birthdays-btn">
+            <span class="st-row-icon">${icon('cake')}</span>
+            <span class="st-row-label">Birthdays</span>
+            <span class="st-chev">${icon('chevron-right')}</span>
+          </button>
+          <button type="button" class="st-row" id="st-holidays-btn">
+            <span class="st-row-icon">${icon('flag')}</span>
+            <span class="st-row-label">Holidays</span>
+            <span class="st-chev">${icon('chevron-right')}</span>
+          </button>
         </div>
         <div class="st-group">
-          ${navRow('notifications', 'bell', 'Notifications')}
           ${navRow('appearance', 'palette', 'Appearance')}
+          <label class="st-row st-row-switch" id="st-notif-row">
+            <span class="st-row-icon">${icon('bell')}</span>
+            <span class="st-row-label">Notifications<span class="st-row-sub hidden" id="st-notif-status"></span></span>
+            <span class="switch">
+              <input type="checkbox" id="st-notif-toggle">
+              <span class="switch-track"></span>
+            </span>
+          </label>
         </div>
       </div>
 
@@ -465,34 +481,6 @@ const Settings = {
         </div>
       </div>
 
-      <div class="st-page hidden" data-page="birthdays">
-        ${pageHeader('Birthdays and holidays', 'menu')}
-        <div class="st-group">
-          <button type="button" class="st-row" id="st-birthdays-btn">
-            <span class="st-row-icon">${icon('cake')}</span>
-            <span class="st-row-label">Birthdays<span class="st-row-sub">Add birthdays and choose who sees them</span></span>
-            <span class="st-chev">${icon('chevron-right')}</span>
-          </button>
-          <button type="button" class="st-row" id="st-holidays-btn">
-            <span class="st-row-icon">${icon('flag')}</span>
-            <span class="st-row-label">Holidays<span class="st-row-sub">Pick which holidays show</span></span>
-            <span class="st-chev">${icon('chevron-right')}</span>
-          </button>
-        </div>
-      </div>
-
-      <div class="st-page hidden" data-page="notifications">
-        ${pageHeader('Notifications', 'menu')}
-        <label class="switch-row" id="st-notif-row">
-          <span>Reminder notifications on this device</span>
-          <span class="switch">
-            <input type="checkbox" id="st-notif-toggle">
-            <span class="switch-track"></span>
-          </span>
-        </label>
-        <p class="muted" id="st-notif-status" style="margin-top:6px;"></p>
-      </div>
-
       <div class="st-page hidden" data-page="appearance">
         ${pageHeader('Appearance', 'menu')}
         <p class="muted" style="margin-top:0;">These only change this device.</p>
@@ -565,6 +553,7 @@ const Settings = {
 
     openModal(body, root => {
       const sheet = root.querySelector('.modal-sheet');
+      if (sheet) sheet.classList.add('st-sheet');
       const showPage = page => {
         root.querySelectorAll('.st-page').forEach(p => p.classList.toggle('hidden', p.dataset.page !== page));
         if (sheet) sheet.scrollTop = 0;
@@ -618,15 +607,21 @@ const Settings = {
 
       const notifToggle = root.querySelector('#st-notif-toggle');
       const notifStatus = root.querySelector('#st-notif-status');
+      // The gray line under Notifications only shows when there's something
+      // to explain -- the switch itself already says on or off.
+      const setNotifStatus = text => {
+        notifStatus.textContent = text;
+        notifStatus.classList.toggle('hidden', !text);
+      };
       (async () => {
         const supported = 'Notification' in window && 'serviceWorker' in navigator
           && firebase.messaging.isSupported && await firebase.messaging.isSupported();
         if (!supported) {
           notifToggle.disabled = true;
-          notifStatus.textContent = "Not supported in this browser. On iPhone, first add this app to your Home Screen (Share → Add to Home Screen), then enable notifications from there.";
+          setNotifStatus('On iPhone, add this app to your Home Screen first (Share → Add to Home Screen), then turn this on from there.');
         } else if (Notification.permission === 'denied') {
           notifToggle.disabled = true;
-          notifStatus.textContent = 'Notifications are blocked for this site — enable them in your browser/device settings, then reopen Settings.';
+          setNotifStatus("Blocked in your phone's settings. Allow notifications for this app there, then reopen Settings.");
         } else {
           notifToggle.checked = Notification.permission === 'granted';
         }
@@ -639,19 +634,19 @@ const Settings = {
             const permission = await Notification.requestPermission();
             if (permission !== 'granted') {
               e.target.checked = false;
-              notifStatus.textContent = 'Permission was not granted.';
+              setNotifStatus("Notifications weren't allowed.");
               return;
             }
             const token = await firebase.messaging().getToken({ vapidKey: VAPID_KEY, serviceWorkerRegistration: registration });
             Store.addDeviceToken(userId, token);
-            notifStatus.textContent = 'Enabled on this device.';
+            setNotifStatus('');
           } else {
             const token = await firebase.messaging().getToken({ vapidKey: VAPID_KEY, serviceWorkerRegistration: registration });
             Store.removeDeviceToken(userId, token);
-            notifStatus.textContent = 'Disabled on this device.';
+            setNotifStatus('');
           }
         } catch (err) {
-          notifStatus.textContent = `Something went wrong: ${err.message}`;
+          setNotifStatus(`Something went wrong: ${err.message}`);
         }
       });
 

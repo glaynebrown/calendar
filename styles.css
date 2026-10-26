@@ -756,6 +756,10 @@ html.has-text-override .bottom-tab.active {
 .st-chev svg { width: 16px; height: 16px; }
 .st-row-profile .st-profile-avatar { width: 40px; height: 40px; font-size: 14px; }
 .st-row-profile .st-row-label > span:first-child { font-weight: 500; }
+.st-row-switch { cursor: default; }
+.st-row-switch .switch { flex-shrink: 0; }
+/* Settings keeps one tall size on every page, so a short page isn't a thin strip */
+.modal-sheet.st-sheet { height: 85vh; max-height: 85vh; }
 .st-row-body { padding: 10px 12px 12px; border-bottom: 0.5px solid var(--border); }
 .st-page-header { gap: 8px; position: relative; }
 .st-page-header h2 { position: absolute; left: 50%; transform: translateX(-50%); white-space: nowrap; pointer-events: none; }

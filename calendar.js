@@ -3100,7 +3100,7 @@ const Calendar = {
       <div id="bd-shared-section"></div>
     `;
     openModal(body, root => {
-      root.querySelector('#bd-close').addEventListener('click', closeModal);
+      root.querySelector('#bd-close').addEventListener('click', () => { closeModal(); Settings.openModal(); });
       const listEl = root.querySelector('#bd-list');
       const sharedSectionEl = root.querySelector('#bd-shared-section');
       const formWrap = root.querySelector('#bd-form-wrap');
@@ -3308,7 +3308,7 @@ const Calendar = {
       <div id="hol-list"></div>
     `;
     openModal(body, root => {
-      root.querySelector('#hol-close').addEventListener('click', closeModal);
+      root.querySelector('#hol-close').addEventListener('click', () => { closeModal(); Settings.openModal(); });
       root.querySelector('#hol-color').addEventListener('input', e => {
         Store.saveHolidayColor(userId, e.target.value);
         Calendar.render();

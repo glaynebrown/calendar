@@ -246,7 +246,14 @@ async function main() {
         continue;
       }
 
-      const occurrences = expandOccurrences(event, rangeStartStr, lookaheadEnd);
+      // Look far enough ahead for this event's earliest reminder (a
+      // "2 weeks before" one needs the event 2 weeks out), never less
+      // than the usual 3 days.
+      const longest = Math.max(0, ...uids.flatMap(u => [].concat(reminders[u]).filter(n => typeof n === 'number')));
+      const eventLookahead = longest > 2 * 24 * 60
+        ? formatISO(new Date(now.getTime() + (longest + 24 * 60) * 60 * 1000))
+        : lookaheadEnd;
+      const occurrences = expandOccurrences(event, rangeStartStr, eventLookahead);
       for (const occDate of occurrences) {
         const eventInstant = zonedTimeToUtc(occDate, event.time, timezone);
 

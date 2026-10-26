@@ -3644,11 +3644,14 @@ const Calendar = {
           <button type="button" class="menu-item" data-val="2880">2 days before</button>
           <button type="button" class="menu-item" data-val="custom">Custom</button>
           <div id="ev-reminder-custom-row" class="hidden" style="display:flex; gap:6px; padding:6px 10px 4px;">
-            <input type="number" id="ev-reminder-custom-amount" min="1" placeholder="Amount" style="width:70px; padding:6px 8px; border-radius:8px; border:0.5px solid var(--border-strong); background:var(--surface-2); color:var(--text); font-size:16px;">
-            <select id="ev-reminder-custom-unit" style="flex:1; padding:6px 8px; border-radius:8px; border:0.5px solid var(--border-strong); background:var(--surface-2); color:var(--text); font-size:16px;">
+            <select id="ev-reminder-custom-amount" aria-label="How many" style="width:64px; padding:6px 8px; border-radius:8px; border:0.5px solid var(--border-strong); background:var(--surface-2); color:var(--text); font-size:16px;">
+              ${Array.from({ length: 60 }, (_, i) => `<option value="${i + 1}">${i + 1}</option>`).join('')}
+            </select>
+            <select id="ev-reminder-custom-unit" aria-label="Minutes, hours, days or weeks" style="flex:1; min-width:0; padding:6px 8px; border-radius:8px; border:0.5px solid var(--border-strong); background:var(--surface-2); color:var(--text); font-size:16px;">
               <option value="minutes">minutes before</option>
               <option value="hours">hours before</option>
               <option value="days">days before</option>
+              <option value="weeks">weeks before</option>
             </select>
             <button type="button" class="btn" style="padding:4px 10px;" id="ev-reminder-custom-set">Set</button>
           </div>
@@ -3909,6 +3912,7 @@ const Calendar = {
       function formatReminderLabel(minutes) {
         if (minutes == null) return 'Reminder';
         if (REMINDER_LABELS[minutes]) return REMINDER_LABELS[minutes];
+        if (minutes % 10080 === 0) return `${minutes / 10080} week${minutes / 10080 === 1 ? '' : 's'} before`;
         if (minutes % 1440 === 0) return `${minutes / 1440} day${minutes / 1440 === 1 ? '' : 's'} before`;
         if (minutes % 60 === 0) return `${minutes / 60} hour${minutes / 60 === 1 ? '' : 's'} before`;
         return `${minutes} minute${minutes === 1 ? '' : 's'} before`;
@@ -3973,7 +3977,6 @@ const Calendar = {
         mi.addEventListener('click', () => {
           if (mi.dataset.val === 'custom') {
             reminderCustomRow.classList.toggle('hidden');
-            if (!reminderCustomRow.classList.contains('hidden')) reminderCustomAmount.focus();
             return;
           }
           reminderCustomRow.classList.add('hidden');
@@ -3983,13 +3986,12 @@ const Calendar = {
       function commitCustomReminder() {
         const amount = parseInt(reminderCustomAmount.value, 10);
         if (!amount || amount < 1) return;
-        const mult = reminderCustomUnit.value === 'days' ? 1440 : reminderCustomUnit.value === 'hours' ? 60 : 1;
+        const mult = { weeks: 10080, days: 1440, hours: 60 }[reminderCustomUnit.value] || 1;
         reminderCustomRow.classList.add('hidden');
-        reminderCustomAmount.value = '';
+        reminderCustomAmount.value = '1';
         setReminder(amount * mult);
       }
       reminderCustomRow.querySelector('#ev-reminder-custom-set').addEventListener('click', commitCustomReminder);
-      reminderCustomAmount.addEventListener('keydown', e => { if (e.key === 'Enter') commitCustomReminder(); });
 
       // Gift ideas save straight to your own private note on blur, independent
       // of the main Save button -- same "commit immediately" pattern as

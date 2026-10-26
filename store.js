@@ -1271,11 +1271,16 @@ const Store = {
   },
 
   // ---- view picker mode: 'named' (saved/custom views) or 'checklist' (live multi-select) ----
+  // Synced like the other preferences, so it's the same on every device
+  // (this device's old local choice is the fallback until it's set once).
   getViewMode(userId) {
+    const synced = this._pref('viewMode');
+    if (synced !== undefined) return synced;
     return localStorage.getItem(`fc_viewMode_${userId}`) || 'named';
   },
   setViewMode(userId, mode) {
     localStorage.setItem(`fc_viewMode_${userId}`, mode);
+    this._syncPref(userId, 'viewMode', mode);
   },
 
   // ---- whether events show their person/category color as a background

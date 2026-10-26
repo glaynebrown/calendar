@@ -453,36 +453,7 @@ const Settings = {
 
       <div class="st-page hidden" data-page="calendar">
         ${pageHeader('Calendar', 'menu')}
-        <label class="switch-row" id="st-viewmode-row">
-          <span>View Menu: use checkboxes instead of named views</span>
-          <span class="switch">
-            <input type="checkbox" id="st-viewmode-toggle" ${Store.getViewMode(userId) === 'checklist' ? 'checked' : ''}>
-            <span class="switch-track"></span>
-          </span>
-        </label>
-        <label class="switch-row" id="st-wishlists-row" style="margin-top:10px;">
-          <span>Show Wishwell wishlists on birthdays</span>
-          <span class="switch">
-            <input type="checkbox" id="st-wishlists-toggle" ${Store.getShowWishlists(userId) ? 'checked' : ''}>
-            <span class="switch-track"></span>
-          </span>
-        </label>
-        <label class="switch-row" id="st-event-colors-row" style="margin-top:10px;">
-          <span>Show colored backgrounds/borders on events</span>
-          <span class="switch">
-            <input type="checkbox" id="st-event-colors-toggle" ${Store.getShowEventColors(userId) ? 'checked' : ''}>
-            <span class="switch-track"></span>
-          </span>
-        </label>
-        <div class="field" style="margin-top:10px;">
-          <label>Event text color (month view)</label>
-          <select id="st-event-text-mode" ${Store.getShowEventColors(userId) ? '' : 'disabled'}>
-            <option value="colored" ${Store.getEventTextMode(userId) === 'colored' ? 'selected' : ''}>Colored</option>
-            <option value="white" ${Store.getEventTextMode(userId) === 'white' ? 'selected' : ''}>Always white</option>
-            <option value="black" ${Store.getEventTextMode(userId) === 'black' ? 'selected' : ''}>Always black</option>
-          </select>
-        </div>
-        <div class="field" style="margin-top:14px;">
+        <div class="field">
           <label>Default calendar view</label>
           <select id="st-default-calendar-view">
             ${[
@@ -491,11 +462,28 @@ const Settings = {
             ].map(([val, label]) => `<option value="${val}" ${Store.getDefaultCalendarView(userId) === val ? 'selected' : ''}>${label}</option>`).join('')}
           </select>
         </div>
+        <div class="field" id="st-viewmode-row">
+          <label>In the View menu, show…</label>
+          <label class="st-invite-opt st-viewmode-opt${Store.getViewMode(userId) !== 'checklist' ? ' selected' : ''}">
+            <span class="st-invite-opt-head"><input type="radio" name="st-viewmode" value="named" ${Store.getViewMode(userId) !== 'checklist' ? 'checked' : ''}><span>Saved views</span></span>
+            <span class="st-row-sub">Pick a view like "Everyone" or "Just me"</span>
+          </label>
+          <label class="st-invite-opt st-viewmode-opt${Store.getViewMode(userId) === 'checklist' ? ' selected' : ''}">
+            <span class="st-invite-opt-head"><input type="radio" name="st-viewmode" value="checklist" ${Store.getViewMode(userId) === 'checklist' ? 'checked' : ''}><span>Checkboxes</span></span>
+            <span class="st-row-sub">Tick each person and category</span>
+          </label>
+        </div>
+        <label class="switch-row" id="st-wishlists-row" style="margin-top:10px;">
+          <span>Show Wishwell wishlists on birthdays</span>
+          <span class="switch">
+            <input type="checkbox" id="st-wishlists-toggle" ${Store.getShowWishlists(userId) ? 'checked' : ''}>
+            <span class="switch-track"></span>
+          </span>
+        </label>
       </div>
 
       <div class="st-page hidden" data-page="appearance">
         ${pageHeader('Appearance', 'menu')}
-        <p class="muted" style="margin-top:0;">These only change this device.</p>
         <div class="field">
           <label>Color mode</label>
           <select id="st-color-mode">
@@ -560,6 +548,22 @@ const Settings = {
             </span>
           </label>
         </div>
+        <p class="st-subhead st-section-head">Events</p>
+        <label class="switch-row" id="st-event-colors-row">
+          <span>Show colored backgrounds/borders on events</span>
+          <span class="switch">
+            <input type="checkbox" id="st-event-colors-toggle" ${Store.getShowEventColors(userId) ? 'checked' : ''}>
+            <span class="switch-track"></span>
+          </span>
+        </label>
+        <div class="field" style="margin-top:10px;">
+          <label>Event text color (month view)</label>
+          <select id="st-event-text-mode" ${Store.getShowEventColors(userId) ? '' : 'disabled'}>
+            <option value="colored" ${Store.getEventTextMode(userId) === 'colored' ? 'selected' : ''}>Colored</option>
+            <option value="white" ${Store.getEventTextMode(userId) === 'white' ? 'selected' : ''}>Always white</option>
+            <option value="black" ${Store.getEventTextMode(userId) === 'black' ? 'selected' : ''}>Always black</option>
+          </select>
+        </div>
       </div>
     `;
 
@@ -598,10 +602,11 @@ const Settings = {
         Calendar.render();
       });
 
-      root.querySelector('#st-viewmode-toggle').addEventListener('change', e => {
-        Store.setViewMode(userId, e.target.checked ? 'checklist' : 'named');
+      root.querySelectorAll('input[name="st-viewmode"]').forEach(radio => radio.addEventListener('change', () => {
+        Store.setViewMode(userId, radio.value);
+        root.querySelectorAll('.st-viewmode-opt').forEach(opt => opt.classList.toggle('selected', opt.contains(radio)));
         Calendar.render();
-      });
+      }));
 
       const eventTextModeSelect = root.querySelector('#st-event-text-mode');
       root.querySelector('#st-wishlists-toggle').addEventListener('change', e => {

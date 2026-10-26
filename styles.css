@@ -781,6 +781,7 @@ html.has-text-override .bottom-tab.active {
 .st-remove { color: var(--text-danger, #c0392b); flex-shrink: 0; }
 .st-household-name { font-weight: 500; margin: 6px 0 2px; font-size: 13px; }
 .st-subhead { font-size: 12px; color: var(--text-secondary); margin: 10px 0 2px; }
+.st-section-head { font-size: 13px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.03em; margin: 22px 0 10px; padding-top: 14px; border-top: 0.5px solid var(--border); }
 .st-empty { font-size: 13px; color: var(--text-muted); margin: 4px 0 0; padding-top: 6px; border-top: 0.5px solid var(--border); }
 .st-invite-btn { width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 4px; }
 .st-invite-btn svg { width: 18px; height: 18px; }

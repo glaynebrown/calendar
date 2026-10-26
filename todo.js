@@ -1175,7 +1175,7 @@ const Todo = {
     openModal(`
       <div class="modal-header"><h2>New</h2><button class="modal-close" id="ntc-close">${icon('x')}</button></div>
       <div class="btn-row">
-        <button type="button" class="btn" id="ntc-checklist" style="flex:1;">To-do List</button>
+        <button type="button" class="btn" id="ntc-checklist" style="flex:1;">List</button>
         <button type="button" class="btn" id="ntc-note" style="flex:1;">Note</button>
         <button type="button" class="btn" id="ntc-other" style="flex:1;">Other</button>
       </div>

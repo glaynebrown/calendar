@@ -968,8 +968,8 @@ const Todo = {
         <button type="button" class="reminder-row-main" data-edit>
           <span class="reminder-row-time">${r.time ? formatTime12(r.time) : ''}</span>
           <span class="reminder-row-text">
-            <span class="reminder-row-title">${escapeHTML(r.title || 'Reminder')}</span>
-            ${r.note || who ? `<span class="reminder-row-sub">${escapeHTML([r.note, who].filter(Boolean).join(' · '))}</span>` : ''}
+            <span class="reminder-row-title">${escapeHTML(r.title || 'Reminder')}${who ? `<span class="reminder-people" aria-label="${escapeAttr(who)}">${icon('users')}</span>` : ''}</span>
+            ${r.note ? `<span class="reminder-row-sub">${escapeHTML(r.note)}</span>` : ''}
           </span>
         </button>
         ${st && st.doneBy
@@ -1011,8 +1011,8 @@ const Todo = {
         btn.className = 'reminder-all-row' + (past ? ' past' : '');
         const who = this.reminderPeopleText(r, userId);
         btn.innerHTML = `
-          <span class="reminder-row-title">${escapeHTML(r.title || 'Reminder')}</span>
-          <span class="reminder-row-sub">${escapeHTML(this.reminderScheduleText(r))}${past ? ' · Done' : ''}${who ? ' · ' + escapeHTML(who) : ''}</span>
+          <span class="reminder-row-title">${escapeHTML(r.title || 'Reminder')}${who ? `<span class="reminder-people" aria-label="${escapeAttr(who)}">${icon('users')}</span>` : ''}</span>
+          <span class="reminder-row-sub">${escapeHTML(this.reminderScheduleText(r))}${past ? ' · Done' : ''}</span>
         `;
         btn.addEventListener('click', () => { closeModal(); this.openReminderModal(r, true); });
         listEl.appendChild(btn);

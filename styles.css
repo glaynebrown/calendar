@@ -1080,3 +1080,5 @@ input[type="color"]::-moz-color-swatch { border: none; border-radius: inherit; }
 .reminders-add svg { width: 18px; height: 18px; }
 .rm-remind-line { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 14px; }
 .rm-remind-line strong { font-weight: 600; }
+.reminder-people { display: inline-flex; vertical-align: -2px; margin-left: 6px; color: var(--text-muted); }
+.reminder-people svg { width: 15px; height: 15px; }

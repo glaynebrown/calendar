@@ -140,6 +140,7 @@ function reminderNextDate(r, afterStr) {
 const MAX_REPEATS = 6;                     // the first one plus 5 repeats, about 30 minutes
 const REPEAT_GAP_MS = 4.5 * 60 * 1000;     // runs come every ~5 minutes; a little under so none get skipped
 const ALERT_AFTER_MS = 15 * 60 * 1000;     // then tell their connections, if they've turned that on
+const ONCE_KEEP_MS = 7 * 24 * 60 * 60 * 1000; // one-time reminders are deleted a week after they go off
 
 async function withRetry(fn, tries = 3) {
   for (let attempt = 1; ; attempt++) {
@@ -277,6 +278,28 @@ async function main() {
       const eventLookahead = longest > 2 * 24 * 60
         ? formatISO(new Date(now.getTime() + (longest + 24 * 60) * 60 * 1000))
         : lookaheadEnd;
+      // "Later" from the Got it pop-up: remind that person again now, then
+      // let their repeats carry on.
+      const snoozeUpd = {};
+      for (const [key, byUid] of Object.entries(event.reminderSnoozes || {})) {
+        for (const [uid, until] of Object.entries(byUid || {})) {
+          if (!until || until > now.getTime()) continue;
+          snoozeUpd[`reminderSnoozes.${key}.${uid}`] = null;
+          if ((event.ackReminders || {})[key]) continue;
+          const acct = await getAccount(uid);
+          const occDate = key.split('_')[0];
+          if (acct && await sendTo(acct, uid, event.title || 'Reminder',
+            `${formatReminderBody(event, occDate, acct.timezone || timezone)} (reminding you again)`)) sentCount++;
+          const prevObj = (event.sentReminders || {})[key];
+          if (prevObj && typeof prevObj === 'object') {
+            snoozeUpd[`sentReminders.${key}.n`] = 1;
+            snoozeUpd[`sentReminders.${key}.last`] = now.getTime();
+            event.sentReminders[key] = { ...prevObj, n: 1, last: now.getTime() };
+          }
+        }
+      }
+      if (Object.keys(snoozeUpd).length) await doc.ref.update(snoozeUpd);
+
       const occurrences = expandOccurrences(event, rangeStartStr, eventLookahead);
       for (const occDate of occurrences) {
         const eventInstant = zonedTimeToUtc(occDate, event.time, timezone);
@@ -316,8 +339,9 @@ async function main() {
           const recipientTz = (recipient && recipient.timezone) || timezone;
           const repeat = !!(recipient && recipient.nagReminders);
           const nowMs = now.getTime();
+          const snoozed = ((((event.reminderSnoozes || {})[sentKey]) || {})[uid] || 0) > nowMs;
           const dueToSend = !prev
-            || (repeat && prev.n < MAX_REPEATS && nowMs - prev.last >= REPEAT_GAP_MS);
+            || (repeat && !snoozed && prev.n < MAX_REPEATS && nowMs - prev.last >= REPEAT_GAP_MS);
 
           if (dueToSend) {
             const title = event.title || 'Reminder';
@@ -335,7 +359,9 @@ async function main() {
 
           // Still not seen 15 minutes after the first one -- tell the people
           // they're connected to, if they've turned that on.
-          if (repeat && !prev.alerted && recipient && recipient.alertConnections
+          // Tapping Later counts as seeing it -- no alert for them.
+          const tappedLater = Object.prototype.hasOwnProperty.call(((event.reminderSnoozes || {})[sentKey]) || {}, uid);
+          if (repeat && !prev.alerted && !tappedLater && recipient && recipient.alertConnections
               && nowMs - prev.first >= ALERT_AFTER_MS) {
             const grants = await getViewerGrants();
             const helpers = new Set();
@@ -384,15 +410,22 @@ async function main() {
       const occ = r.nextOccDate;
       const tz = r.timeZone || 'America/New_York';
       const nowMs = now.getTime();
+      const isOnce = (r.repeat || {}).type === 'once';
       const advance = extra => {
         const next = occ ? reminderNextDate(r, occ) : null;
         return doc.ref.update({
           nextOccDate: next,
-          nextDueAt: next ? zonedTimeToUtc(next, r.time, tz).getTime() : null,
+          // A one-time reminder that's done comes back once more, a week
+          // later, to be deleted (see just below).
+          nextDueAt: next ? zonedTimeToUtc(next, r.time, tz).getTime() : (isOnce ? nowMs + ONCE_KEEP_MS : null),
           ...(extra || {}),
         });
       };
-      if (!occ) { await doc.ref.update({ nextDueAt: null }); continue; }
+      if (!occ) {
+        if (isOnce) { await doc.ref.delete(); console.log(`Cleared finished reminder "${r.title}"`); }
+        else await doc.ref.update({ nextDueAt: null });
+        continue;
+      }
       const st = r.state && r.state.occDate === occ ? r.state : null;
       // Already Got it (even before it went off), or the run is hours late.
       if (st && st.doneBy) { await advance(); continue; }
@@ -405,7 +438,11 @@ async function main() {
         const acct = await getAccount(uid);
         if (acct) recipients.push({ uid, acct });
       }
-      const nag = recipients.filter(p => p.acct.nagReminders);
+      // Anyone who tapped Later has their repeats paused until then.
+      // (A Later that's come due is sent by the "Later" step below instead.)
+      const snoozedNow = uid => !!(((st && st.snoozes) || {})[uid]);
+      const nagAll = recipients.filter(p => p.acct.nagReminders);
+      const nag = nagAll.filter(p => !snoozedNow(p.uid));
       const title = r.title || 'Reminder';
       const bodyFor = (p, repeat) => {
         const base = formatReminderBody({ time: r.time }, occ, p.acct.timezone || tz);
@@ -432,7 +469,8 @@ async function main() {
         n += 1; last = nowMs;
         upd['state.n'] = n; upd['state.last'] = last;
       }
-      const alertFor = nag.filter(p => p.acct.alertConnections);
+      // Tapping Later counts as seeing it -- no alert for them.
+      const alertFor = nagAll.filter(p => p.acct.alertConnections && !Object.prototype.hasOwnProperty.call(st.snoozes || {}, p.uid));
       if (alertFor.length && !alerted && nowMs - st.first >= ALERT_AFTER_MS) {
         const grants = await getViewerGrants();
         const reminded = new Set(recipients.map(p => p.uid));
@@ -455,7 +493,9 @@ async function main() {
         upd['state.alerted'] = true;
       }
       const wake = [];
-      if (nag.length && n < MAX_REPEATS) wake.push(last + REPEAT_GAP_MS);
+      // Counts snoozed people too, so today's reminder stays open for their
+      // repeats to pick back up after Later.
+      if (nagAll.length && n < MAX_REPEATS) wake.push(last + REPEAT_GAP_MS);
       if (alertFor.length && !alerted) wake.push(st.first + ALERT_AFTER_MS);
       if (wake.length) {
         upd.nextDueAt = Math.min(...wake);
@@ -466,6 +506,43 @@ async function main() {
     } catch (err) {
       errorCount++;
       console.warn(`Skipped reminder ${doc.id}:`, err.message);
+    }
+  }
+
+  // ---- "Later" on standalone reminders: remind that one person again,
+  // then let their repeats carry on if they have them. ----
+  const snoozeSnap = await withRetry(() =>
+    db.collection('reminders').where('snoozeAt', '<=', now.getTime()).get());
+  for (const doc of snoozeSnap.docs) {
+    try {
+      const r = doc.data();
+      const st = r.state || {};
+      const nowMs = now.getTime();
+      const snoozes = st.snoozes || {};
+      const upd = {};
+      if (!st.doneBy) {
+        for (const [uid, until] of Object.entries(snoozes)) {
+          if (!until || until > nowMs) continue;
+          const acct = await getAccount(uid);
+          if (acct) {
+            const base = formatReminderBody({ time: r.time }, st.occDate, acct.timezone || r.timeZone || 'America/New_York');
+            if (await sendTo(acct, uid, r.title || 'Reminder', [base, r.note].filter(Boolean).join(' · ') + ' (reminding you again)')) sentCount++;
+            // Still on today's reminder -- pick their repeats back up.
+            if (acct.nagReminders && r.nextOccDate === st.occDate) {
+              upd['state.n'] = 1;
+              upd['state.last'] = nowMs;
+              upd.nextDueAt = Math.min(r.nextDueAt || Infinity, nowMs + REPEAT_GAP_MS);
+            }
+          }
+          upd[`state.snoozes.${uid}`] = null;
+        }
+      }
+      const left = st.doneBy ? [] : Object.values(snoozes).filter(u => u && u > nowMs);
+      upd.snoozeAt = left.length ? Math.min(...left) : null;
+      await doc.ref.update(upd);
+    } catch (err) {
+      errorCount++;
+      console.warn(`Skipped reminder snooze ${doc.id}:`, err.message);
     }
   }
 

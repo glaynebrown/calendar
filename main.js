@@ -409,10 +409,17 @@ const App = {
           <div class="muted">${escapeHTML(when(p))}</div>
         </div>`).join('')}
       <button class="btn btn-primary" id="ack-got-it" style="width:100%;margin-top:14px;font-size:17px;padding:14px;">Got it</button>
+      <button class="btn" id="ack-later" style="width:100%;margin-top:8px;">Later</button>
     `, root => {
       const skip = () => { pending.forEach(p => this.skippedAcks.add(p.key + p.event.id)); closeModal(); };
       root.querySelector('#ack-close').addEventListener('click', skip);
       root.querySelector('#modal-backdrop').addEventListener('click', e => { if (e.target.id === 'modal-backdrop') pending.forEach(p => this.skippedAcks.add(p.key + p.event.id)); });
+      root.querySelector('#ack-later').addEventListener('click', () => {
+        openLaterPicker(pending.length === 1 ? pending[0].event.title : '', mins => {
+          pending.forEach(p => (p.reminder ? Store.snoozeReminder(p.reminder.id, p.occDate, mins) : Store.snoozeEventReminder(p.event.id, p.key, mins)));
+          Calendar.render();
+        }, () => this.checkReminderAcks());
+      });
       root.querySelector('#ack-got-it').addEventListener('click', () => {
         pending.forEach(p => (p.reminder ? Store.gotItReminder(p.reminder.id, p.occDate) : Store.ackReminder(p.event.id, p.key)));
         closeModal();

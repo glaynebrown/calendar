@@ -1124,6 +1124,35 @@ const Store = {
   },
   // "Got it" for one day's reminder -- also works before it has gone off
   // (e.g. trash already out), which stops it sending at all that day.
+  // "Later": remind just me again in `minutes` (scripts/send-reminders.js
+  // sends it, and pauses my repeats until then).
+  snoozeReminder(id, occDate, minutes) {
+    const me = this.getCurrentUserId();
+    const idx = _cache.reminders.findIndex(r => r.id === id);
+    if (idx < 0) return;
+    const r = _cache.reminders[idx];
+    if (!r.state || r.state.occDate !== occDate) return;
+    const until = Date.now() + minutes * 60 * 1000;
+    const snoozeAt = Math.min(r.snoozeAt || Infinity, until);
+    _cache.reminders[idx] = { ...r, snoozeAt, state: { ...r.state, snoozes: { ...(r.state.snoozes || {}), [me]: until } } };
+    firebase.firestore().collection('reminders').doc(id)
+      .update({ [`state.snoozes.${me}`]: until, snoozeAt })
+      .catch(err => console.warn('Later failed:', err.code));
+  },
+  // Same "Later" for an event's reminder (the Got it pop-up).
+  snoozeEventReminder(eventId, key, minutes) {
+    const me = this.getCurrentUserId();
+    const idx = _cache.events.findIndex(e => e.id === eventId);
+    if (idx < 0) return;
+    const until = Date.now() + minutes * 60 * 1000;
+    const e = _cache.events[idx];
+    const snoozes = { ...(e.reminderSnoozes || {}) };
+    snoozes[key] = { ...(snoozes[key] || {}), [me]: until };
+    _cache.events[idx] = { ...e, reminderSnoozes: snoozes };
+    firebase.firestore().collection('events').doc(eventId)
+      .update({ [`reminderSnoozes.${key}.${me}`]: until })
+      .catch(err => console.warn('Later failed:', err.code));
+  },
   gotItReminder(id, occDate) {
     const me = this.getCurrentUserId();
     const idx = _cache.reminders.findIndex(r => r.id === id);
@@ -1162,6 +1191,7 @@ const Store = {
         const [occDate, uid] = key.split('_');
         if (uid !== userId || !v || typeof v !== 'object') return;
         if ((e.ackReminders || {})[key] || !(v.first > cutoff)) return;
+        if ((((e.reminderSnoozes || {})[key]) || {})[userId] > Date.now()) return;
         if (out.some(p => p.event.id === e.id && p.occDate === occDate)) { out.push({ event: e, occDate, key, dup: true }); return; }
         out.push({ event: e, occDate, key });
       });
@@ -1171,6 +1201,7 @@ const Store = {
     _cache.reminders.forEach(r => {
       const st = r.state;
       if (!st || st.doneBy || !(st.first > cutoff) || !(r.remindIds || []).includes(userId)) return;
+      if (((st.snoozes || {})[userId] || 0) > Date.now()) return;
       out.push({ reminder: r, event: { id: r.id, title: r.title, time: r.time }, occDate: st.occDate, key: 'reminder' });
     });
     return out;

@@ -89,6 +89,25 @@ function makeSortable(container, onReorder) {
   container.addEventListener('pointercancel', endDrag);
 }
 
+// "Later" choices for a reminder -- a small pop-up in the middle of the
+// screen. onPick(minutes).
+function openLaterPicker(title, onPick, onCancel) {
+  openModal(`
+    <div class="modal-header"><h2>Remind me again in</h2><button class="modal-close" id="lt-close" aria-label="Close">${icon('x')}</button></div>
+    ${title ? `<p class="muted" style="margin-top:0;">${escapeHTML(title)}</p>` : ''}
+    <div class="btn-row" style="margin-top:6px;">
+      <button type="button" class="btn" data-m="10">10 min</button>
+      <button type="button" class="btn" data-m="30">30 min</button>
+      <button type="button" class="btn" data-m="60">1 hour</button>
+    </div>
+  `, root => {
+    root.querySelector('#modal-backdrop').classList.add('modal-center');
+    const cancel = () => { closeModal(); if (onCancel) onCancel(); };
+    root.querySelector('#lt-close').addEventListener('click', cancel);
+    root.querySelectorAll('[data-m]').forEach(b => b.addEventListener('click', () => { closeModal(); onPick(Number(b.dataset.m)); }));
+  });
+}
+
 const Todo = {
   expandedAddFor: null, // id of the note whose "add item" input is currently open
   // Id of an item newly inserted mid-list (see buildItemRow's Enter
@@ -961,6 +980,9 @@ const Todo = {
       const row = document.createElement('div');
       row.className = 'reminder-row' + (st && st.doneBy ? ' done' : '');
       const who = this.reminderPeopleText(r, userId);
+      // Later only once it has gone off today, for someone it reminds.
+      const canLater = !!(st && st.first && (r.remindIds || []).includes(userId));
+      const mySnooze = st && ((st.snoozes || {})[userId] || 0) > Date.now() ? st.snoozes[userId] : null;
       const doneText = st && st.doneBy
         ? `${st.doneBy === userId ? 'You' : ((Store.getAccount(st.doneBy) || {}).name || 'Someone')}, ${new Date(st.doneAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`
         : '';
@@ -974,11 +996,16 @@ const Todo = {
         </button>
         ${st && st.doneBy
           ? `<span class="reminder-done">${icon('check')}<span>${escapeHTML(doneText)}</span></span>`
-          : `<button type="button" class="btn btn-primary reminder-got-it" data-got>Got it</button>`}
+          : `<span class="reminder-actions">
+              <button type="button" class="btn btn-primary reminder-got-it" data-got>Got it</button>
+              ${canLater ? `<button type="button" class="link-btn reminder-later" data-later>${mySnooze ? `Again at ${new Date(mySnooze).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}` : 'Later'}</button>` : ''}
+            </span>`}
       `;
       row.querySelector('[data-edit]').addEventListener('click', () => this.openReminderModal(r));
       const got = row.querySelector('[data-got]');
       if (got) got.addEventListener('click', () => { Store.gotItReminder(r.id, today); this.render(); });
+      const later = row.querySelector('[data-later]');
+      if (later) later.addEventListener('click', () => openLaterPicker(r.title, mins => { Store.snoozeReminder(r.id, today, mins); this.render(); }));
       strip.appendChild(row);
     });
     const allBtn = strip.querySelector('[data-all]');
@@ -1005,7 +1032,7 @@ const Todo = {
       const listEl = root.querySelector('#ar-list');
       if (!rems.length) listEl.innerHTML = '<p class="muted">No reminders yet.</p>';
       rems.forEach(r => {
-        const past = r.nextDueAt == null && !reminderOccursOn(r, today);
+        const past = r.nextOccDate == null && !reminderOccursOn(r, today);
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'reminder-all-row' + (past ? ' past' : '');
@@ -1034,6 +1061,9 @@ const Todo = {
     let repeatType = r ? (r.repeat || {}).type || 'once' : 'once';
     let dateVal = r ? (r.repeat || {}).date || today : today;
     let daysVal = r && r.repeat && r.repeat.days ? r.repeat.days.slice() : [parseISO(today).getDay()];
+    // Every week starts on the picked date's weekday, and follows the date
+    // until you tap the circles yourself.
+    let daysTouched = !!(r && r.repeat && r.repeat.days);
     const remindIds = new Set(r ? r.remindIds || [] : [userId]);
     const DAY_LETTERS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
     const back = () => { closeModal(); if (fromAll) this.openAllReminders(); };
@@ -1116,6 +1146,7 @@ const Todo = {
       repeatSel.addEventListener('change', () => { repeatType = repeatSel.value; refreshRepeat(); });
       root.querySelectorAll('.rm-day').forEach(b => b.addEventListener('click', () => {
         const d = Number(b.dataset.day);
+        daysTouched = true;
         daysVal = daysVal.includes(d) ? daysVal.filter(x => x !== d) : [...daysVal, d];
         errorEl.classList.add('hidden');
         refreshRepeat();
@@ -1131,6 +1162,7 @@ const Todo = {
         openDatePicker(dateVal, null, start => {
           dateVal = start;
           root.querySelector('#rm-date .tf-text').textContent = formatDateShort(start);
+          if (!daysTouched) daysVal = [parseISO(start).getDay()];
           refreshRepeat();
         }, { single: true, withDone: true });
       });

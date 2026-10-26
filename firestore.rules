@@ -203,7 +203,7 @@ service cloud.firestore {
           )
         ) ||
         (request.auth.uid in resource.data.visibleTo
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reminders', 'hasReminders', 'orderByDate', 'ackReminders']))
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reminders', 'hasReminders', 'orderByDate', 'ackReminders', 'reminderSnoozes']))
       );
       allow delete: if isSignedIn() && (
         (
@@ -311,7 +311,7 @@ service cloud.firestore {
     // Standalone reminders (To-do tab). visibleTo = whoever made it plus
     // everyone it reminds. Editing follows events: the maker or their
     // household (editIndex); a connection's reminders are theirs alone.
-    // Anyone it reminds may tap Got it (only `state` changes). The
+    // Anyone it reminds may tap Got it or Later (only `state`/`snoozeAt`). The
     // reminders script (admin) also writes state/nextDueAt, and only sends
     // to people the maker could actually remind.
     match /reminders/{id} {
@@ -323,7 +323,7 @@ service cloud.firestore {
         && request.resource.data.visibleTo.size() <= 30;
       allow update: if isSignedIn() && (
         (request.auth.uid in resource.data.visibleTo
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['state'])) ||
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['state', 'snoozeAt'])) ||
         (request.resource.data.createdBy == resource.data.createdBy
           && request.resource.data.visibleTo is list
           && request.resource.data.visibleTo.size() <= 30

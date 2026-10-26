@@ -3642,16 +3642,16 @@ const Calendar = {
           <button type="button" class="menu-item" data-val="60">1 hour before</button>
           <button type="button" class="menu-item" data-val="1440">1 day before</button>
           <button type="button" class="menu-item" data-val="2880">2 days before</button>
+          <button type="button" class="menu-item" data-val="10080">1 week before</button>
           <button type="button" class="menu-item" data-val="custom">Custom</button>
           <div id="ev-reminder-custom-row" class="hidden" style="display:flex; gap:6px; padding:6px 10px 4px;">
             <select id="ev-reminder-custom-amount" aria-label="How many" style="width:64px; padding:6px 8px; border-radius:8px; border:0.5px solid var(--border-strong); background:var(--surface-2); color:var(--text); font-size:16px;">
               ${Array.from({ length: 60 }, (_, i) => `<option value="${i + 1}">${i + 1}</option>`).join('')}
             </select>
-            <select id="ev-reminder-custom-unit" aria-label="Minutes, hours, days or weeks" style="flex:1; min-width:0; padding:6px 8px; border-radius:8px; border:0.5px solid var(--border-strong); background:var(--surface-2); color:var(--text); font-size:16px;">
+            <select id="ev-reminder-custom-unit" aria-label="Minutes, hours or days" style="flex:1; min-width:0; padding:6px 8px; border-radius:8px; border:0.5px solid var(--border-strong); background:var(--surface-2); color:var(--text); font-size:16px;">
               <option value="minutes">minutes before</option>
               <option value="hours">hours before</option>
               <option value="days">days before</option>
-              <option value="weeks">weeks before</option>
             </select>
             <button type="button" class="btn" style="padding:4px 10px;" id="ev-reminder-custom-set">Set</button>
           </div>
@@ -3908,7 +3908,7 @@ const Calendar = {
         setTimeout(() => { savePresetBtn.textContent = 'Save as preset'; }, 1200);
       });
 
-      const REMINDER_LABELS = { 15: '15 minutes before', 30: '30 minutes before', 60: '1 hour before', 1440: '1 day before', 2880: '2 days before' };
+      const REMINDER_LABELS = { 15: '15 minutes before', 30: '30 minutes before', 60: '1 hour before', 1440: '1 day before', 2880: '2 days before', 10080: '1 week before' };
       function formatReminderLabel(minutes) {
         if (minutes == null) return 'Reminder';
         if (REMINDER_LABELS[minutes]) return REMINDER_LABELS[minutes];
@@ -3986,7 +3986,7 @@ const Calendar = {
       function commitCustomReminder() {
         const amount = parseInt(reminderCustomAmount.value, 10);
         if (!amount || amount < 1) return;
-        const mult = { weeks: 10080, days: 1440, hours: 60 }[reminderCustomUnit.value] || 1;
+        const mult = { days: 1440, hours: 60 }[reminderCustomUnit.value] || 1;
         reminderCustomRow.classList.add('hidden');
         reminderCustomAmount.value = '1';
         setReminder(amount * mult);

@@ -937,6 +937,10 @@ input[type="color"]::-moz-color-swatch { border: none; border-radius: inherit; }
   box-shadow: 0 8px 24px rgba(0,0,0,0.12); padding: 4px; z-index: 20;
 }
 .repeat-menu .menu-item { padding: 8px 10px; font-size: 13px; }
+/* One row per reminder (up to 3) -- each holds the menu while it's open */
+.reminder-slot { position: relative; }
+.reminder-slot + .reminder-slot { margin-top: 6px; }
+#ev-reminder-add { padding: 2px 0; }
 /* Date note sharing list sits at the bottom of its form, where a floating
    menu would run off the screen -- open it in place instead, so the sheet
    just grows to fit it. */

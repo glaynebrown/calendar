@@ -250,12 +250,22 @@ async function main() {
       for (const occDate of occurrences) {
         const eventInstant = zonedTimeToUtc(occDate, event.time, timezone);
 
+        // reminders[uid] is a number (one reminder) or an array (up to 3,
+        // e.g. 1 day before AND 1 hour before) -- each sends on its own.
+        // One reminder keeps the original "<date>_<uid>" key; several get
+        // "<date>_<uid>_<minutes>" so each is tracked separately.
+        const due = [];
         for (const uid of uids) {
-          const minutesBefore = reminders[uid];
+          const r = reminders[uid];
+          (Array.isArray(r) ? r : [r]).forEach(minutesBefore => {
+            if (typeof minutesBefore !== 'number') return;
+            due.push({ uid, minutesBefore, sentKey: Array.isArray(r) ? `${occDate}_${uid}_${minutesBefore}` : `${occDate}_${uid}` });
+          });
+        }
+        for (const { uid, minutesBefore, sentKey } of due) {
           const dueAt = new Date(eventInstant.getTime() - minutesBefore * 60 * 1000);
           if (dueAt < windowStart || dueAt > now) continue;
 
-          const sentKey = `${occDate}_${uid}`;
           const prev = (event.sentReminders || {})[sentKey];
           // true = sent once, done (everyone without repeat reminders).
           // An object = repeat reminders for someone with "Keep reminding
@@ -265,6 +275,11 @@ async function main() {
           if (prev === true) continue;
           const acked = !!(event.ackReminders || {})[sentKey];
           if (prev && acked) continue;
+          // A later reminder for the same event has already gone out (e.g.
+          // the 15-minutes-before one after the 30-minutes-before one) --
+          // only the newest keeps repeating, so they never double up.
+          if (prev && due.some(o => o.uid === uid && o.minutesBefore < minutesBefore
+              && (event.sentReminders || {})[o.sentKey])) continue;
 
           const recipient = accounts.get(uid);
           const recipientTz = (recipient && recipient.timezone) || timezone;

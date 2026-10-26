@@ -1011,7 +1011,9 @@ const Store = {
   // update instead of updateEvent's full-document merge-then-set, so setting
   // your own reminder can never clobber someone else's concurrent edit to
   // the same event (title, another person's reminder, etc).
+  // minutes: a number (one reminder), an array (up to 3), or null (none).
   setMyReminder(eventId, userId, minutes) {
+    if (Array.isArray(minutes) && !minutes.length) minutes = null;
     const idx = _cache.events.findIndex(e => e.id === eventId);
     if (idx >= 0) {
       const reminders = { ..._cache.events[idx].reminders };
@@ -1046,9 +1048,12 @@ const Store = {
     const out = [];
     _cache.events.forEach(e => {
       Object.entries(e.sentReminders || {}).forEach(([key, v]) => {
-        if (!key.endsWith(`_${userId}`) || !v || typeof v !== 'object') return;
+        // key = "<date>_<uid>" (one reminder) or "<date>_<uid>_<minutes>" (several)
+        const [occDate, uid] = key.split('_');
+        if (uid !== userId || !v || typeof v !== 'object') return;
         if ((e.ackReminders || {})[key] || !(v.first > cutoff)) return;
-        out.push({ event: e, occDate: key.slice(0, key.length - userId.length - 1), key });
+        if (out.some(p => p.event.id === e.id && p.occDate === occDate)) { out.push({ event: e, occDate, key, dup: true }); return; }
+        out.push({ event: e, occDate, key });
       });
     });
     return out;

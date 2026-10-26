@@ -3633,7 +3633,8 @@ const Calendar = {
         <div class="field" id="ev-time-end-field"><button type="button" class="time-field-btn${event && event.endTime ? '' : ' placeholder'}" id="ev-time-end-btn">${icon('clock')}<span class="tf-text">${event && event.endTime ? formatTime12(event.endTime) : 'Add end time'}</span></button></div>
       </div>
       <div class="field" id="ev-reminder-field">
-        <button type="button" class="time-field-btn placeholder" id="ev-reminder-btn">${icon('bell')}<span class="tf-text">Reminder</span></button>
+        <div id="ev-reminder-slots"></div>
+        <div class="reminder-slot"><button type="button" class="link-btn hidden" id="ev-reminder-add">+ Add another reminder</button></div>
         <div id="ev-reminder-menu" class="repeat-menu hidden">
           <button type="button" class="menu-item" data-val="none">None</button>
           <button type="button" class="menu-item" data-val="15">15 minutes before</button>
@@ -3827,7 +3828,7 @@ const Calendar = {
           refreshOwnerBtn();
         }
         if (match.visibility) privateCb.checked = match.visibility === 'private';
-        if (match.reminder != null) { reminderVal = match.reminder; refreshReminderUI(); }
+        if (match.reminder != null) { reminderVals = toReminderList(match.reminder); refreshReminderUI(); }
       }
       function hideTitleSuggestions() {
         titleSuggestions.classList.add('hidden');
@@ -3896,7 +3897,7 @@ const Calendar = {
           location: root.querySelector('#ev-location').value.trim() || null,
           participantIds: Array.from(ownerMenu.querySelectorAll('input:checked')).map(i => i.value),
           visibility: privateCb.checked ? 'private' : 'shared',
-          reminder: reminderVal,
+          reminder: toStoredReminders(reminderVals),
         };
         if (idx >= 0) presets[idx] = preset; else presets.push(preset);
         Store.saveEventPresets(userId, presets);
@@ -3912,27 +3913,62 @@ const Calendar = {
         if (minutes % 60 === 0) return `${minutes / 60} hour${minutes / 60 === 1 ? '' : 's'} before`;
         return `${minutes} minute${minutes === 1 ? '' : 's'} before`;
       }
-      // Reminders are per-viewer -- this is *my* reminder preference for this
-      // event, independent of anyone else who can also see it. Changes save
-      // immediately via Store.setMyReminder rather than waiting for the main
-      // Save button, so they can never be clobbered by (or clobber) someone
-      // else's concurrent edit to the same event.
-      let reminderVal = event && event.reminders && event.reminders[userId] != null ? event.reminders[userId] : null;
-      const reminderBtn = root.querySelector('#ev-reminder-btn');
+      // Reminders are per-viewer -- these are *my* reminders for this event
+      // (up to 3, e.g. 1 day before AND 1 hour before), independent of
+      // anyone else who can also see it. Stored as a number for one, an
+      // array for more. Changes save immediately via Store.setMyReminder
+      // rather than waiting for the main Save button, so they can never be
+      // clobbered by (or clobber) someone else's concurrent edit.
+      const MAX_REMINDERS = 3;
+      const toReminderList = v => (Array.isArray(v) ? v.slice() : v == null ? [] : [v]);
+      const toStoredReminders = list => (list.length === 0 ? null : list.length === 1 ? list[0] : list);
+      let reminderVals = toReminderList(event && event.reminders ? event.reminders[userId] : null);
+      const reminderSlots = root.querySelector('#ev-reminder-slots');
+      const reminderAddBtn = root.querySelector('#ev-reminder-add');
       const reminderMenu = root.querySelector('#ev-reminder-menu');
       const reminderCustomRow = root.querySelector('#ev-reminder-custom-row');
       const reminderCustomAmount = root.querySelector('#ev-reminder-custom-amount');
       const reminderCustomUnit = root.querySelector('#ev-reminder-custom-unit');
+      // Which reminder the open menu changes: an index, or 'new' to add one.
+      let reminderMenuSlot = 0;
       function refreshReminderUI() {
-        const isSet = reminderVal != null;
-        const isPreset = isSet && REMINDER_LABELS[reminderVal] !== undefined;
-        const key = !isSet ? 'none' : (isPreset ? String(reminderVal) : 'custom');
-        reminderBtn.querySelector('.tf-text').textContent = formatReminderLabel(reminderVal);
-        reminderBtn.classList.toggle('placeholder', !isSet);
+        const shown = reminderVals.length ? reminderVals : [null];
+        reminderSlots.innerHTML = shown.map((v, i) => `
+          <div class="reminder-slot"><button type="button" class="time-field-btn${v == null ? ' placeholder' : ''}" data-slot="${i}">${icon('bell')}<span class="tf-text">${formatReminderLabel(v)}</span></button></div>`).join('');
+        reminderSlots.querySelectorAll('[data-slot]').forEach(btn => {
+          btn.addEventListener('click', () => openReminderMenu(Number(btn.dataset.slot), btn.parentElement));
+        });
+        reminderAddBtn.classList.toggle('hidden', !reminderVals.length || reminderVals.length >= MAX_REMINDERS);
+        reminderMenu.classList.add('hidden');
+      }
+      function openReminderMenu(slot, holder) {
+        if (!reminderMenu.classList.contains('hidden') && reminderMenuSlot === slot) {
+          reminderMenu.classList.add('hidden');
+          return;
+        }
+        reminderMenuSlot = slot;
+        holder.appendChild(reminderMenu);
+        const cur = slot === 'new' ? undefined : reminderVals[slot];
+        const key = cur == null ? (slot === 'new' ? '' : 'none') : (REMINDER_LABELS[cur] !== undefined ? String(cur) : 'custom');
         reminderMenu.querySelectorAll('.menu-item').forEach(mi => mi.classList.toggle('selected', mi.dataset.val === key));
+        reminderCustomRow.classList.add('hidden');
+        reminderMenu.classList.remove('hidden');
+      }
+      function setReminder(val) {
+        if (reminderMenuSlot === 'new') {
+          if (val != null) reminderVals.push(val);
+        } else if (val == null) {
+          reminderVals.splice(reminderMenuSlot, 1);
+        } else {
+          reminderVals[reminderMenuSlot] = val;
+        }
+        // Earliest first (1 day before, then 1 hour before), no duplicates.
+        reminderVals = Array.from(new Set(reminderVals)).sort((a, b) => b - a).slice(0, MAX_REMINDERS);
+        refreshReminderUI();
+        if (isEdit) Store.setMyReminder(event.id, userId, toStoredReminders(reminderVals));
       }
       refreshReminderUI();
-      reminderBtn.addEventListener('click', () => reminderMenu.classList.toggle('hidden'));
+      reminderAddBtn.addEventListener('click', () => openReminderMenu('new', reminderAddBtn.parentElement));
       reminderMenu.querySelectorAll('.menu-item').forEach(mi => {
         mi.addEventListener('click', () => {
           if (mi.dataset.val === 'custom') {
@@ -3941,22 +3977,16 @@ const Calendar = {
             return;
           }
           reminderCustomRow.classList.add('hidden');
-          reminderVal = mi.dataset.val === 'none' ? null : parseInt(mi.dataset.val, 10);
-          reminderMenu.classList.add('hidden');
-          refreshReminderUI();
-          if (isEdit) Store.setMyReminder(event.id, userId, reminderVal);
+          setReminder(mi.dataset.val === 'none' ? null : parseInt(mi.dataset.val, 10));
         });
       });
       function commitCustomReminder() {
         const amount = parseInt(reminderCustomAmount.value, 10);
         if (!amount || amount < 1) return;
         const mult = reminderCustomUnit.value === 'days' ? 1440 : reminderCustomUnit.value === 'hours' ? 60 : 1;
-        reminderVal = amount * mult;
         reminderCustomRow.classList.add('hidden');
-        reminderMenu.classList.add('hidden');
         reminderCustomAmount.value = '';
-        refreshReminderUI();
-        if (isEdit) Store.setMyReminder(event.id, userId, reminderVal);
+        setReminder(amount * mult);
       }
       reminderCustomRow.querySelector('#ev-reminder-custom-set').addEventListener('click', commitCustomReminder);
       reminderCustomAmount.addEventListener('keydown', e => { if (e.key === 'Enter') commitCustomReminder(); });
@@ -4104,7 +4134,7 @@ const Calendar = {
       // dropdowns is open -- their own toggle buttons are excluded so a
       // click that opens one doesn't immediately close it again.
       root.addEventListener('click', e => {
-        [[ownerMenu, ownerBtn], [categoryMenu, categoryBtn], [reminderMenu, reminderBtn], [repeatMenu, repeatBtn]].forEach(([menu, btn]) => {
+        [[ownerMenu, ownerBtn], [categoryMenu, categoryBtn], [reminderMenu, root.querySelector('#ev-reminder-field')], [repeatMenu, repeatBtn]].forEach(([menu, btn]) => {
           if (!menu.classList.contains('hidden') && !menu.contains(e.target) && !btn.contains(e.target)) {
             menu.classList.add('hidden');
           }
@@ -4324,7 +4354,7 @@ const Calendar = {
           // Reminders already saved live via setMyReminder as they're changed
           // (see above) -- only set the initial map here for a brand-new event,
           // where there's no risk yet of clobbering anyone else's setting.
-          if (!isEdit) newEvent.reminders = reminderVal != null ? { [userId]: reminderVal } : {};
+          if (!isEdit) newEvent.reminders = reminderVals.length ? { [userId]: toStoredReminders(reminderVals) } : {};
 
           Object.assign(newEvent, repeatFields(date));
 

@@ -403,7 +403,7 @@ const App = {
     };
     openModal(`
       <div class="modal-header"><h2>Reminder</h2><button class="modal-close" id="ack-close" aria-label="Close">${icon('x')}</button></div>
-      ${pending.map(p => `
+      ${pending.filter(p => !p.dup).map(p => `
         <div class="reminder-ack-item">
           <div class="reminder-ack-title">${escapeHTML(p.event.title || 'Reminder')}</div>
           <div class="muted">${escapeHTML(when(p))}</div>

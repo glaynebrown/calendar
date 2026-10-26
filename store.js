@@ -56,7 +56,8 @@ const _cache = {
   birthdays: [],      // own birthdays plus any shared with the current user (see the `visibleTo` note below)
   birthdayNotes: [],  // the CURRENT signed-in user's own private gift-idea notes only (private)
   noteLooks: {},      // the CURRENT user's own look (colors/photo) for shared lists, keyed by note id (private)
-  viewerGrants: [],   // who views whom: { viewerId, ofUid, createdBy } -- see viewersOf/canEditCalendarOf
+  viewerGrants: [],   // connection ties: { viewerId, ofUid, createdBy, twoWay? } -- see viewersOf/canEditEvent
+  connectIndex: null, // the CURRENT user's own connectIndex doc { ids, legacyEditors } (private) -- see syncConnectIndex
   dateNotes: [],      // short calendar labels ("Mom flies home") -- own plus any shared with the current user
   monthThemes: {}, monthThemesReady: false,               // own per-month background overrides, one Firestore doc each (private)
   plannerMonthThemes: {}, plannerMonthThemesReady: false,  // same, for the planner's own override tier (private)
@@ -177,7 +178,7 @@ const Store = {
   startSync(userId) {
     this.stopSync();
     const db = firebase.firestore();
-    const pending = new Set(['accounts', 'connections-a', 'connections-b', 'households', 'events', 'categories', 'views', 'editTrust', 'notes', 'preferences', 'birthdays', 'birthdayNotes', 'dateNotes', 'viewers', 'noteLooks', 'monthThemes', 'plannerMonthThemes']);
+    const pending = new Set(['accounts', 'connections-a', 'connections-b', 'households', 'events', 'categories', 'views', 'editTrust', 'notes', 'preferences', 'birthdays', 'birthdayNotes', 'dateNotes', 'viewers', 'connectIndex', 'noteLooks', 'monthThemes', 'plannerMonthThemes']);
     // Just what the calendar needs to draw itself correctly (people, events,
     // filters, colors/theme). main.js shows the calendar as soon as these
     // are in; the rest (notes, birthdays, date notes, backgrounds) fill in
@@ -251,6 +252,20 @@ const Store = {
       _cache.editTrust = (snap.data() && snap.data().ids) || [];
       settle('editTrust'); notify();
     }));
+
+    // Private per-person list of connections who may ADD events to my
+    // calendar (and change only the ones they added) -- what the security
+    // rules check for connections. Kept up to date by syncConnectIndex.
+    _unsubscribers.push(db.collection('connectIndex').doc(userId).onSnapshot(
+      snap => {
+        _cache.connectIndex = snap.exists ? snap.data() : { ids: [], missing: true };
+        settle('connectIndex');
+      },
+      err => {
+        console.warn('Connect index sync failed:', err.code);
+        settle('connectIndex');
+      }
+    ));
 
     // Same visibleTo pattern as events (see computeVisibleTo/addEvent) but
     // simpler -- a note's visibleTo is just [ownerId, ...sharedWith], no
@@ -345,6 +360,9 @@ const Store = {
       snap => {
         _cache.viewerGrants = snap.docs.map(d => ({ id: d.id, ...d.data() }));
         settle('viewers'); notify();
+        // Someone just connected to (or was removed from) me while I'm in
+        // the app -- let them add events here right away, not next launch.
+        if (_cache.connectIndex) this.syncConnectIndex();
       },
       err => {
         console.warn('Viewers sync failed:', err.code);
@@ -410,7 +428,8 @@ const Store = {
     _cache.accounts = []; _cache.connections = []; _cache.households = [];
     _cache.events = []; _cache.categories = []; _cache.views = []; _cache.editTrust = [];
     _cache.notes = []; _cache.preferences = {};
-    _cache.birthdays = []; _cache.birthdayNotes = []; _cache.dateNotes = []; _cache.viewerGrants = []; _cache.noteLooks = {};
+    _cache.birthdays = []; _cache.birthdayNotes = []; _cache.dateNotes = []; _cache.viewerGrants = []; _cache.connectIndex = null; _cache.noteLooks = {};
+    this._connectIndexReady = false;
     _cache.monthThemes = {}; _cache.monthThemesReady = false;
     _cache.plannerMonthThemes = {}; _cache.plannerMonthThemesReady = false;
   },
@@ -550,11 +569,15 @@ const Store = {
     return _cache.editTrust;
   },
 
-  // ---- viewers: someone (e.g. a parent) who can SEE chosen household
-  // members' shared events but never change them. One-way the other way
-  // round: the people they view can add/edit events on the viewer's own
-  // calendar (the viewer's editIndex lists them; theirs never lists the
-  // viewer). Granted only by accepting a 'viewer' invite link. ----
+  // ---- connections (shown as "Connections" in Settings; stored as
+  // `viewers` grants for history): someone like a parent, tied to chosen
+  // household members. Both sides see each other's shared events and can
+  // ADD events to each other's calendars, but each person can only change
+  // or delete the events they added themselves (events record `createdBy`).
+  // Granted only by accepting a 'viewer' invite link. Grants made before
+  // this was two-way have no `twoWay` flag: back then only the household
+  // side could add, so their old events stay editable by them (see
+  // isLegacyHelper). ----
   viewersOf(uid) {
     return _cache.viewerGrants.filter(g => g.ofUid === uid).map(g => g.viewerId);
   },
@@ -564,19 +587,45 @@ const Store = {
   getViewerGrants() {
     return _cache.viewerGrants;
   },
-  // Whose calendar the current user may add/edit events on. Household
-  // edit-trust is mutual, so editIndex alone answered this before; a
-  // viewer's editIndex lists the people they view, which must NOT let the
-  // viewer edit those people's events -- hence the viewer checks first.
+  sharesHousehold(a, b) {
+    return _cache.households.some(h => h.memberIds.includes(a) && h.memberIds.includes(b));
+  },
+  // a and b are tied by a connection grant (either direction) and aren't
+  // also in a household together (household rights win if they are).
+  isConnectionPair(a, b) {
+    if (!a || !b || a === b || this.sharesHousehold(a, b)) return false;
+    return _cache.viewerGrants.some(g => (g.viewerId === a && g.ofUid === b) || (g.viewerId === b && g.ofUid === a));
+  },
+  // Everyone tied to `uid` as a connection.
+  connectionsOf(uid) {
+    const ids = new Set([...this.viewersOf(uid), ...this.viewedBy(uid)]);
+    return [...ids].filter(id => this.isConnectionPair(uid, id));
+  },
+  // Old one-way grant: `helperId` used to have full edit rights on
+  // `ownerId`'s calendar, so events from back then (no createdBy) stay theirs.
+  isLegacyHelper(helperId, ownerId) {
+    return _cache.viewerGrants.some(g => g.viewerId === ownerId && g.ofUid === helperId && !g.twoWay);
+  },
+  // Whose calendar the current user may ADD events to: their own, a
+  // household member's, or a connection's.
   canEditCalendarOf(otherId) {
     const me = this.getCurrentUserId();
     if (!otherId || otherId === me) return true;
-    if (_cache.viewerGrants.some(g => g.viewerId === otherId && g.ofUid === me)) return true;
-    if (_cache.viewerGrants.some(g => g.viewerId === me && g.ofUid === otherId)) return false;
+    if (this.isConnectionPair(me, otherId)) return true;
     return this.isEditTrusted(otherId);
   },
+  // Whether the current user may change/delete this event. Mirrors the
+  // events rule in firestore.rules: an event a connection added is theirs
+  // alone; a connection can only change what they added; otherwise the
+  // owner and their household can.
   canEditEvent(ev) {
-    return this.canEditCalendarOf(ev.ownerId);
+    const me = this.getCurrentUserId();
+    const owner = ev.ownerId;
+    const by = ev.createdBy;
+    if (by && by !== me && this.isConnectionPair(by, owner)) return false;
+    if (!owner || owner === me) return true;
+    if (this.isConnectionPair(me, owner)) return by === me || (!by && this.isLegacyHelper(me, owner));
+    return this.isEditTrusted(owner);
   },
   async createViewerInvite(ownerId, viewOf) {
     const code = uid();
@@ -584,38 +633,81 @@ const Store = {
       .set({ type: 'viewer', ownerId, viewOf, householdId: null, revoked: false, createdAt: Date.now() });
     return code;
   },
-  // Removes `viewerId` as a viewer of every household person the current
-  // user can act for, strips them from those people's events (they stay on
-  // events they're actually ON), and drops the current user's own tie to
-  // them. Other people's connection to the viewer is cleaned up by their
-  // own device next time it opens (see reconcileViewerAccess).
-  removeViewer(viewerId) {
+  // Keeps my private connectIndex (who may add events to my calendar) in
+  // step with my connection grants. Only I can write my own, so every
+  // device fixes its own -- right after accepting an invite, at sign-in,
+  // and whenever grants change while the app is open. The first time it
+  // runs it also records which old one-way helpers keep their pre-existing
+  // events (legacyEditors) and drops them from my editIndex, so they stop
+  // having full household-style rights over my calendar.
+  syncConnectIndex() {
+    const me = this.getCurrentUserId();
+    if (!me || !this._connectIndexReady || !_cache.connectIndex) return;
+    const want = this.connectionsOf(me).sort();
+    const cur = _cache.connectIndex;
+    const have = (cur.ids || []).slice().sort();
+    const db = firebase.firestore();
+    const legacy = _cache.viewerGrants.filter(g => g.viewerId === me && !g.twoWay).map(g => g.ofUid);
+    const needsLegacy = !('legacyEditors' in cur);
+    // Old one-way helpers lose full household-style rights over my
+    // calendar -- only once the new index is saved, so they never lose
+    // access to their old events in between.
+    const dropOldEditRights = () => {
+      const drop = want.filter(id => _cache.editTrust.includes(id));
+      if (!drop.length) return;
+      _cache.editTrust = _cache.editTrust.filter(id => !drop.includes(id));
+      return db.collection('editIndex').doc(me).update({ ids: firebase.firestore.FieldValue.arrayRemove(...drop) });
+    };
+    if (needsLegacy || want.join() !== have.join()) {
+      const doc = { ids: want, legacyEditors: needsLegacy ? legacy : (cur.legacyEditors || []) };
+      _cache.connectIndex = doc;
+      db.collection('connectIndex').doc(me).set(doc).then(dropOldEditRights)
+        .catch(err => console.warn('Connect index update failed:', err.code));
+    } else {
+      Promise.resolve(dropOldEditRights()).catch(() => {});
+    }
+  },
+  // Removes the connection between the current user and `otherId`: if they
+  // connected to my household, their ties to every household person I can
+  // act for go too; if I'm the one who connected, just my own ties. Strips
+  // them from those people's events (they stay on events they're actually
+  // ON). Other people's leftovers are cleaned up by their own device next
+  // time it opens (see reconcileViewerAccess/syncConnectIndex).
+  removeViewer(otherId) {
     const me = this.getCurrentUserId();
     const db = firebase.firestore();
-    const grants = _cache.viewerGrants.filter(g => g.viewerId === viewerId && this.canEditCalendarOf(g.ofUid));
-    const ofIds = new Set(grants.map(g => g.ofUid));
+    const grants = _cache.viewerGrants.filter(g =>
+      (g.viewerId === otherId && (g.ofUid === me || this.isEditTrusted(g.ofUid)))
+      || (g.viewerId === me && g.ofUid === otherId));
+    const ofIds = new Set(grants.map(g => (g.viewerId === otherId ? g.ofUid : me)));
     _cache.viewerGrants = _cache.viewerGrants.filter(g => !grants.includes(g));
-    grants.forEach(g => db.collection('viewers').doc(g.id).delete().catch(err => console.warn('Remove viewer failed', err.code)));
+    grants.forEach(g => db.collection('viewers').doc(g.id).delete().catch(err => console.warn('Remove connection failed', err.code)));
     _cache.events.forEach(e => {
-      if (!(e.visibleTo || []).includes(viewerId) || e.ownerId === viewerId) return;
+      if (!(e.visibleTo || []).includes(otherId) || e.ownerId === otherId) return;
       const pids = e.participantIds || [e.ownerId];
-      if (pids.includes(viewerId) || !pids.some(pid => ofIds.has(pid)) || !this.canEditEvent(e)) return;
-      this.updateEvent(e.id, { visibleTo: e.visibleTo.filter(id => id !== viewerId) });
+      if (pids.includes(otherId) || !pids.some(pid => ofIds.has(pid)) || !this.canEditEvent(e)) return;
+      this.updateEvent(e.id, { visibleTo: e.visibleTo.filter(id => id !== otherId) });
     });
-    const conn = _cache.connections.find(c => (c.a === me && c.b === viewerId) || (c.a === viewerId && c.b === me));
-    if (conn && conn.viaViewer && !_cache.viewerGrants.some(g => g.viewerId === viewerId && g.ofUid === me)) this.removeConnection(me, viewerId);
-    if (!_cache.viewerGrants.some(g => g.viewerId === viewerId && g.ofUid === me)) {
-      db.collection('editIndex').doc(viewerId).update({ ids: firebase.firestore.FieldValue.arrayRemove(me) }).catch(() => {});
+    const conn = _cache.connections.find(c => (c.a === me && c.b === otherId) || (c.a === otherId && c.b === me));
+    if (conn && conn.viaViewer && !this.isConnectionPair(me, otherId)) this.removeConnection(me, otherId);
+    if (!this.isConnectionPair(me, otherId)) {
+      // Take myself off their list of who can add to their calendar (and
+      // any old full-edit grant from before connections were two-way).
+      db.collection('connectIndex').doc(otherId).update({ ids: firebase.firestore.FieldValue.arrayRemove(me) }).catch(() => {});
+      db.collection('editIndex').doc(otherId).update({ ids: firebase.firestore.FieldValue.arrayRemove(me) }).catch(() => {});
     }
+    this.syncConnectIndex();
     _cache.birthdays.filter(b => b.ownerId === me && b.shared).forEach(b => this.updateBirthday(me, b.id, { shared: true }));
   },
-  // Every sign-in, quietly brings viewer access up to date:
-  //  - adds viewers to upcoming shared events/birthdays they should see
-  //    (covers events from before they joined -- a viewer's own device
-  //    can't do this, since they can't edit anyone else's events)
-  //  - drops leftover ties once a viewer has been removed (connections
-  //    created by the viewer link, and the viewer's own edit grants).
+  // Every sign-in, quietly brings connection access up to date:
+  //  - adds connections to upcoming shared events/birthdays they should see
+  //    (covers events from before they joined)
+  //  - syncs who may add to my calendar (syncConnectIndex)
+  //  - drops leftover ties once a connection has been removed (connections
+  //    created by the invite link, and old one-way edit grants).
   reconcileViewerAccess(userId) {
+    this._connectIndexReady = true;
+    this.syncConnectIndex();
     const todayStr = formatISO(new Date());
     _cache.events.forEach(e => {
       if (e.visibility !== 'shared' || !this.canEditEvent(e)) return;
@@ -849,17 +941,18 @@ const Store = {
       this.addHouseholdMember(invite.householdId, acceptingUserId);
       return { ok: true, connectedTo: others, joinedHousehold: invite.householdId };
     }
-    // Viewer: can see the chosen people's shared events, can't change
-    // them; those people (and only them) get to add/edit events on the
-    // viewer's own calendar. Grants are written first -- the security
-    // rules check them against this invite -- then the visibility ties.
+    // Connection (type 'viewer' for history): ties the accepter to the
+    // chosen people -- both sides see each other's shared events and can
+    // add events to each other's calendars, changing only what they added.
+    // Grants are written first -- the security rules check them against
+    // this invite -- then the visibility ties and my connectIndex.
     if (invite.type === 'viewer') {
       const ofIds = (invite.viewOf || []).filter(id => id !== acceptingUserId);
       if (!ofIds.length) return { ok: false, reason: 'This invite link is no longer valid.' };
       const db = firebase.firestore();
       try {
         await Promise.all(ofIds.map(ofUid => {
-          const grant = { viewerId: acceptingUserId, ofUid, createdBy: invite.ownerId, inviteCode: code, createdAt: Date.now() };
+          const grant = { viewerId: acceptingUserId, ofUid, createdBy: invite.ownerId, inviteCode: code, createdAt: Date.now(), twoWay: true };
           const id = `${acceptingUserId}_${ofUid}`;
           if (!_cache.viewerGrants.some(g => g.id === id)) _cache.viewerGrants.push({ id, ...grant });
           return db.collection('viewers').doc(id).set(grant);
@@ -869,10 +962,7 @@ const Store = {
         return { ok: false, reason: "Couldn't accept this invite -- check your connection and try again." };
       }
       ofIds.forEach(ofUid => this.addConnection(ofUid, acceptingUserId, { viaViewer: true }));
-      await db.collection('editIndex').doc(acceptingUserId)
-        .set({ ids: firebase.firestore.FieldValue.arrayUnion(...ofIds) }, { merge: true }).catch(() => {});
-      ofIds.forEach(id => { if (!_cache.editTrust.includes(id)) _cache.editTrust.push(id); });
-      this._syncPref(acceptingUserId, 'viewerHelpers', Array.from(new Set([...(this._pref('viewerHelpers') || []), ...ofIds])));
+      this.syncConnectIndex();
       return { ok: true, connectedTo: ofIds, viewer: true };
     }
     return { ok: false, reason: 'Unknown invite type.' };
@@ -891,6 +981,9 @@ const Store = {
   },
   addEvent(event) {
     const id = event.id || uid();
+    // Who added it -- a connection can only change events they added
+    // themselves (see canEditEvent and the events rule).
+    event = { ...event, createdBy: this.getCurrentUserId() };
     const participantIds = event.participantIds || [event.ownerId];
     const visibleTo = computeVisibleTo(event.ownerId, participantIds, event.visibility, event.customPeople);
     const full = { ...event, id, participantIds, visibleTo, hasReminders: hasAnyReminders(event.reminders) };

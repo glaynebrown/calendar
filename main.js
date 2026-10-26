@@ -339,14 +339,14 @@ const App = {
 
     let description = '';
     if (invite.type === 'individual_connect') {
-      description = `${Store.getAccount(invite.ownerId).name} wants to connect with you.`;
+      description = `${(Store.getAccount(invite.ownerId) || {}).name || 'Someone'} invited you to be viewers of each other's calendars. You'll each see the events the other shares, but neither of you can add or change anything.`;
     } else if (invite.type === 'household_member' || invite.type === 'household_connect') {
       const h = Store.getHouseholds().find(h => h.id === invite.householdId);
-      description = `Join the household "${h ? h.name : ''}"? You'll be able to see everyone's calendar, and they'll see yours.`;
+      description = `Join the household "${h ? h.name : ''}"? Everyone in it can see, add, edit, and delete each other's events.`;
     } else if (invite.type === 'viewer') {
       const names = (invite.viewOf || []).map(id => (Store.getAccount(id) || {}).name).filter(Boolean);
       const list = names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}` : (names[0] || 'them');
-      description = `${(Store.getAccount(invite.ownerId) || {}).name || 'Someone'} invited you to see ${list}'s calendar${names.length > 1 ? 's' : ''}. You'll see their shared events but can't change them, and ${list} can add appointments to your calendar for you.`;
+      description = `${(Store.getAccount(invite.ownerId) || {}).name || 'Someone'} invited you to connect with ${list}. You'll see each other's shared events and can add events to each other's calendars. Each person can only change or delete the events they added.`;
     }
 
     openModal(`

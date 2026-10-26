@@ -298,17 +298,53 @@ const Settings = {
     onTap(document.getElementById('todo-settings-btn'), () => this.openModal());
   },
 
-  openModal() {
+  // startPage: which Settings page to open on ('menu' by default) -- the
+  // invite sheet uses it to come back to People when it's closed.
+  openModal(startPage) {
     const userId = Store.getCurrentUserId();
     const knownPeople = Store.getKnownPeople(userId).filter(p => p.id !== userId);
     const me = Store.getPerson(userId);
     const theme = Store.getTheme();
 
-    const body = `
-      <div class="modal-header"><h2>Settings</h2><button class="modal-close" id="st-close">${icon('x')}</button></div>
+    // iPhone-style: a short menu of rows, each opening its own page inside
+    // this same sheet (the rest of the pages stay hidden until tapped).
+    const navRow = (page, iconName, label) => `
+      <button type="button" class="st-row" data-go="${page}">
+        <span class="st-row-icon">${icon(iconName)}</span>
+        <span class="st-row-label">${label}</span>
+        <span class="st-chev">${icon('chevron-right')}</span>
+      </button>`;
+    const pageHeader = (title, back) => `
+      <div class="modal-header st-page-header">
+        <button type="button" class="st-back" data-go="${back}" aria-label="Back">${icon('chevron-left')}<span>${back === 'menu' ? 'Settings' : 'People'}</span></button>
+        <h2>${title}</h2>
+        <button class="modal-close" data-close aria-label="Close">${icon('x')}</button>
+      </div>`;
 
-      <div class="settings-section">
-        <h3>My profile</h3>
+    const body = `
+      <div class="st-page" data-page="menu">
+        <div class="modal-header"><h2>Settings</h2><button class="modal-close" id="st-close" aria-label="Close">${icon('x')}</button></div>
+        <div class="st-group">
+          <button type="button" class="st-row st-row-profile" data-go="profile">
+            <span class="avatar-mini st-profile-avatar" id="st-menu-avatar" style="background:${me ? me.defaultColor : '#888'}">${initials(me ? me.name : '')}</span>
+            <span class="st-row-label"><span id="st-menu-name">${escapeHTML(me ? me.name : '')}</span><span class="st-row-sub">Name, color, sign out</span></span>
+            <span class="st-chev">${icon('chevron-right')}</span>
+          </button>
+        </div>
+        <div class="st-group">
+          ${navRow('people', 'users', 'People')}
+          ${navRow('calendar', 'calendar', 'Calendar')}
+          ${navRow('birthdays', 'cake', 'Birthdays and holidays')}
+        </div>
+        <div class="st-group">
+          ${navRow('notifications', 'bell', 'Notifications')}
+          ${navRow('appearance', 'palette', 'Appearance')}
+        </div>
+      </div>
+
+      <div class="st-page hidden" data-page="profile">
+        ${pageHeader('My profile', 'menu')}
+        <p class="muted" style="margin-top:0;">Tap your circle to change your color.</p>
         <div class="file-btn-row">
           <span class="avatar-color-wrap">
             <span class="avatar-mini avatar-color-btn" id="st-my-avatar" style="background:${me ? me.defaultColor : '#888'}">${initials(me ? me.name : '')}</span>
@@ -319,47 +355,76 @@ const Settings = {
         <button type="button" class="link-btn" id="st-sign-out" style="margin-top:10px;">Sign out</button>
       </div>
 
-      <div class="settings-section">
-        <h3>Household</h3>
-        <p class="muted" style="margin-top:-4px;">Everyone in a household can see and add events for each other -- this is what you'll mainly use.</p>
-        <div id="st-households-list"></div>
-        <div class="field-row">
-          <input type="text" id="st-household-name" placeholder="Household name">
-          <button class="btn" id="st-create-household">Create</button>
-        </div>
-        <div id="st-viewers" style="margin-top:14px;"></div>
-      </div>
+      <div class="st-page hidden" data-page="people">
+        ${pageHeader('People', 'menu')}
 
-      <div class="settings-section">
-        <h3>Connections (visibility only)</h3>
-        <p class="muted" style="margin-top:-4px;">Connect with individuals, one at a time -- they can see your calendar, but can't add events for you.</p>
-        ${knownPeople.length ? '<p class="muted">Tap someone\'s icon to change the color you see them as.</p>' : ''}
-        <div id="st-connections-list"></div>
-        ${knownPeople.length === 0 ? '<p class="muted">No connections yet.</p>' : ''}
-        <div class="field-row" style="align-items:center; margin-top:10px;">
-          <p class="muted" style="margin:0; flex:1;">Copy and send this link to anyone you want to connect with:</p>
-          <button class="btn" id="st-copy-invite">Copy</button>
-        </div>
-        <button type="button" class="link-btn" id="st-revoke-invite">Revoke and get a new link</button>
-        <div class="field" style="margin-top:12px;">
-          <label>Have an invite link?</label>
-          <div class="field-row">
-            <input type="text" id="st-accept-code" placeholder="Paste invite link">
-            <button class="btn" id="st-accept-code-btn">Connect</button>
+        <div class="st-card">
+          <div class="st-card-title">Household</div>
+          <div class="st-perms">
+            <span class="perm-chip">${icon('check')}See</span>
+            <span class="perm-chip">${icon('check')}Add</span>
+            <span class="perm-chip">${icon('check')}Edit and delete</span>
           </div>
-          <p class="muted" id="st-accept-result"></p>
+          <p class="st-card-note">For people you live with. You can add, edit, and delete each other's events.</p>
+          <div id="st-households-list"></div>
+          <div id="st-create-household-wrap" class="field-row" style="margin-top:8px;">
+            <input type="text" id="st-household-name" placeholder="Household name">
+            <button class="btn" id="st-create-household">Create</button>
+          </div>
+        </div>
+
+        <div class="st-card">
+          <div class="st-card-title">Connections</div>
+          <div class="st-perms">
+            <span class="perm-chip">${icon('check')}See</span>
+            <span class="perm-chip">${icon('check')}Add</span>
+            <span class="perm-chip perm-chip-soft">Fix only what you added</span>
+          </div>
+          <p class="st-card-note">You can see each other's events and add to each other's calendars. Each person can only change or delete the events they added.</p>
+          <div id="st-connections-card"></div>
+        </div>
+
+        <div class="st-card">
+          <div class="st-card-title">Viewers</div>
+          <div class="st-perms">
+            <span class="perm-chip">${icon('check')}See</span>
+            <span class="perm-chip perm-chip-soft">Only what's shared</span>
+          </div>
+          <p class="st-card-note">You see the events you each share. Neither of you can add or change anything.</p>
+          <div id="st-viewers-list"></div>
+        </div>
+
+        <button type="button" class="btn btn-primary st-invite-btn" id="st-invite">${icon('user-plus')}<span>Invite someone</span></button>
+        <p class="muted st-people-hint">Tap someone's circle to change the color you see them as.</p>
+
+        <div class="st-group">
+          <button type="button" class="st-row" id="st-accept-toggle">
+            <span class="st-row-label">Have an invite link?</span>
+            <span class="st-chev">${icon('chevron-right')}</span>
+          </button>
+          <div id="st-accept-wrap" class="st-row-body hidden">
+            <div class="field-row">
+              <input type="text" id="st-accept-code" placeholder="Paste invite link">
+              <button class="btn" id="st-accept-code-btn">Join</button>
+            </div>
+            <p class="muted" id="st-accept-result" style="margin:6px 0 0;"></p>
+          </div>
+          <button type="button" class="st-row" data-go="order">
+            <span class="st-row-label">People order</span>
+            <span class="st-chev">${icon('chevron-right')}</span>
+          </button>
         </div>
       </div>
 
-      <div class="settings-section">
-        <h3>People order</h3>
-        <p class="muted" style="margin-top:-4px;">Drag to set the order people appear in everywhere you pick from your household/connections -- like the Participants list when adding an event. This is just your own preference; everyone else can set their own order independently. You always appear first.</p>
+      <div class="st-page hidden" data-page="order">
+        ${pageHeader('People order', 'people')}
+        <p class="muted" style="margin-top:0;">Drag to set the order people appear in when you pick them, like the Participants list on an event. Only you see this order. You always come first.</p>
         <div id="st-people-order-list"></div>
         ${knownPeople.length === 0 ? '<p class="muted">Nobody to reorder yet.</p>' : ''}
       </div>
 
-      <div class="settings-section">
-        <h3>Calendar</h3>
+      <div class="st-page hidden" data-page="calendar">
+        ${pageHeader('Calendar', 'menu')}
         <label class="switch-row" id="st-viewmode-row">
           <span>View Menu: use checkboxes instead of named views</span>
           <span class="switch">
@@ -398,18 +463,26 @@ const Settings = {
             ].map(([val, label]) => `<option value="${val}" ${Store.getDefaultCalendarView(userId) === val ? 'selected' : ''}>${label}</option>`).join('')}
           </select>
         </div>
-        <div class="field-row" style="margin-top:12px;">
-          <button type="button" class="btn" id="st-holidays-btn" style="flex:1; display:flex; align-items:center; justify-content:center; gap:6px;">
-            ${icon('flag')}<span>Holidays</span>
+      </div>
+
+      <div class="st-page hidden" data-page="birthdays">
+        ${pageHeader('Birthdays and holidays', 'menu')}
+        <div class="st-group">
+          <button type="button" class="st-row" id="st-birthdays-btn">
+            <span class="st-row-icon">${icon('cake')}</span>
+            <span class="st-row-label">Birthdays<span class="st-row-sub">Add birthdays and choose who sees them</span></span>
+            <span class="st-chev">${icon('chevron-right')}</span>
           </button>
-          <button type="button" class="btn" id="st-birthdays-btn" style="flex:1; display:flex; align-items:center; justify-content:center; gap:6px;">
-            ${icon('cake')}<span>Birthdays</span>
+          <button type="button" class="st-row" id="st-holidays-btn">
+            <span class="st-row-icon">${icon('flag')}</span>
+            <span class="st-row-label">Holidays<span class="st-row-sub">Pick which holidays show</span></span>
+            <span class="st-chev">${icon('chevron-right')}</span>
           </button>
         </div>
       </div>
 
-      <div class="settings-section">
-        <h3>Notifications</h3>
+      <div class="st-page hidden" data-page="notifications">
+        ${pageHeader('Notifications', 'menu')}
         <label class="switch-row" id="st-notif-row">
           <span>Reminder notifications on this device</span>
           <span class="switch">
@@ -420,8 +493,9 @@ const Settings = {
         <p class="muted" id="st-notif-status" style="margin-top:6px;"></p>
       </div>
 
-      <div class="settings-section">
-        <h3>Appearance (this device)</h3>
+      <div class="st-page hidden" data-page="appearance">
+        ${pageHeader('Appearance', 'menu')}
+        <p class="muted" style="margin-top:0;">These only change this device.</p>
         <div class="field">
           <label>Color mode</label>
           <select id="st-color-mode">
@@ -490,6 +564,15 @@ const Settings = {
     `;
 
     openModal(body, root => {
+      const sheet = root.querySelector('.modal-sheet');
+      const showPage = page => {
+        root.querySelectorAll('.st-page').forEach(p => p.classList.toggle('hidden', p.dataset.page !== page));
+        if (sheet) sheet.scrollTop = 0;
+      };
+      root.querySelectorAll('[data-go]').forEach(btn => btn.addEventListener('click', () => showPage(btn.dataset.go)));
+      root.querySelectorAll('[data-close]').forEach(btn => btn.addEventListener('click', closeModal));
+      showPage(startPage || 'menu');
+
       root.querySelector('#st-close').addEventListener('click', closeModal);
 
       root.querySelector('#st-sign-out').addEventListener('click', async () => {
@@ -501,6 +584,8 @@ const Settings = {
         const newName = e.target.value.trim() || me.name;
         Store.updatePerson(userId, { name: newName });
         root.querySelector('#st-my-avatar').textContent = initials(newName);
+        root.querySelector('#st-menu-avatar').textContent = initials(newName);
+        root.querySelector('#st-menu-name').textContent = newName;
         Calendar.render();
       });
       const myAvatarBtn = root.querySelector('#st-my-avatar');
@@ -508,6 +593,7 @@ const Settings = {
       myColorInput.addEventListener('input', e => {
         Store.updatePerson(userId, { defaultColor: e.target.value });
         myAvatarBtn.style.background = e.target.value;
+        root.querySelector('#st-menu-avatar').style.background = e.target.value;
         Calendar.render();
       });
 
@@ -585,64 +671,124 @@ const Settings = {
         }
       }
 
-      function renderConnections() {
-        const listEl = root.querySelector('#st-connections-list');
-        listEl.innerHTML = '';
-        // Household co-members are always connections too (that's what
-        // grants them visibility), but they're managed from the Household
-        // section above -- removing someone here would delete only the
-        // connection record, leaving their household spot and edit access
-        // dangling. Only plain, non-household connections belong in this list.
-        const householdMemberIds = new Set(
-          Store.getHouseholdsFor(userId).flatMap(h => h.memberIds).filter(id => id !== userId)
-        );
-        // Viewer ties are managed in Household -> Viewers instead, for the same reason.
-        Store.viewersOf(userId).forEach(id => householdMemberIds.add(id));
-        Store.viewedBy(userId).forEach(id => householdMemberIds.add(id));
-        Store.getKnownPeople(userId).filter(p => p.id !== userId && !householdMemberIds.has(p.id)).forEach(p => {
-          const row = document.createElement('div');
-          row.className = 'color-swatch-row';
-          const viewColor = Store.colorFor(userId, p.id);
-          row.innerHTML = `
-            <div class="color-swatch-row-left">
-              <span class="avatar-color-wrap">
-                <span class="avatar-mini avatar-color-btn" style="background:${viewColor};">${initials(p.name)}</span>
-                <input type="color" class="avatar-color-input color-input-overlay" aria-label="Change ${escapeAttr(p.name)}'s color" value="${viewColor}">
-              </span>
-              <span>${p.name}</span>
-            </div>
+      const nameOf = id => (Store.getAccount(id) || {}).name || '?';
+      // Tap-to-change color circle, used for everyone on the People page.
+      const colorAvatar = id => {
+        const c = Store.colorFor(userId, id);
+        return `<span class="avatar-color-wrap">
+          <span class="avatar-mini avatar-color-btn" style="background:${c};">${initials(nameOf(id))}</span>
+          <input type="color" class="avatar-color-input color-input-overlay" data-color-for="${id}" aria-label="Change ${escapeAttr(nameOf(id))}'s color" value="${c}">
+        </span>`;
+      };
+      const wireColorInputs = el => {
+        el.querySelectorAll('[data-color-for]').forEach(input => {
+          input.addEventListener('input', e => {
+            Store.setColorForPerson(userId, input.dataset.colorFor, e.target.value);
+            input.closest('.avatar-color-wrap').querySelector('.avatar-color-btn').style.background = e.target.value;
+            Calendar.render();
+          });
+        });
+      };
+      const personRow = (id, sub, actionLabel) => `
+        <div class="st-person">
+          ${id === userId
+            ? `<span class="avatar-mini" style="background:${me ? me.defaultColor : '#888'};">${initials(nameOf(id))}</span>`
+            : colorAvatar(id)}
+          <span class="st-person-name">${escapeHTML(nameOf(id))}${id === userId ? ' <span class="muted">(you)</span>' : ''}${sub ? `<span class="st-row-sub">${escapeHTML(sub)}</span>` : ''}</span>
+          ${actionLabel ? `<button type="button" class="link-btn st-remove" data-person="${id}">${actionLabel}</button>` : ''}
+        </div>`;
+
+      function renderHouseholds() {
+        const listEl = root.querySelector('#st-households-list');
+        const households = Store.getHouseholdsFor(userId);
+        root.querySelector('#st-create-household-wrap').classList.toggle('hidden', households.length > 0);
+        listEl.innerHTML = households.length ? '' : '<p class="st-empty">Create a household, then invite the people you live with.</p>';
+        households.forEach(h => {
+          const wrap = document.createElement('div');
+          wrap.className = 'st-household';
+          wrap.innerHTML = `
+            ${households.length > 1 ? `<p class="st-household-name">${escapeHTML(h.name)}</p>` : ''}
+            ${h.memberIds.map(id => personRow(id, '', id === userId ? 'Leave' : 'Remove')).join('')}
           `;
-          const avatarBtn = row.querySelector('.avatar-color-btn');
-          const colorInput = row.querySelector('.avatar-color-input');
-          colorInput.addEventListener('input', e => {
-            Store.setColorForPerson(userId, p.id, e.target.value);
-            avatarBtn.style.background = e.target.value;
-            Calendar.render();
+          wireColorInputs(wrap);
+          wrap.querySelectorAll('.st-remove').forEach(btn => {
+            btn.addEventListener('click', () => {
+              const memberId = btn.dataset.person;
+              const isLeave = memberId === userId;
+              const confirmMsg = isLeave
+                ? `Leave "${h.name}"? You'll lose shared access with everyone in it.`
+                : `Remove ${nameOf(memberId)} from "${h.name}"?`;
+              if (!confirm(confirmMsg)) return;
+              Store.removeHouseholdMember(h.id, memberId);
+              renderPeople();
+              Calendar.render();
+            });
           });
-          const removeBtn = document.createElement('button');
-          removeBtn.className = 'btn btn-danger';
-          removeBtn.style.padding = '4px 10px';
-          removeBtn.textContent = 'Remove';
-          removeBtn.addEventListener('click', () => {
-            if (!confirm(`Remove ${p.name} as a connection?`)) return;
-            Store.removeConnection(userId, p.id);
-            renderConnections();
-            Calendar.render();
-          });
-          row.appendChild(removeBtn);
-          listEl.appendChild(row);
+          listEl.appendChild(wrap);
         });
       }
-      renderConnections();
 
-      // Flat list of everyone known (household + plain connections alike),
-      // in this user's own custom order (see Store.getPersonOrder) -- feeds
-      // Store.getKnownPeople everywhere it's used, including the event
-      // editor's Participants picker. Deliberately separate from the
-      // Household/Connections lists above: those manage WHO you know,
-      // this only manages the ORDER, which is why household members show
-      // up here too even though they're excluded from the plain
-      // Connections list.
+      // Connections: everyone tied by a connection invite to you or anyone
+      // in your household (see Store.isConnectionPair), whichever side
+      // sent the invite.
+      function renderConnectionsCard() {
+        const el = root.querySelector('#st-connections-card');
+        const circle = new Set([userId]);
+        Store.getHouseholdsFor(userId).forEach(h => h.memberIds.forEach(id => circle.add(id)));
+        const tiedTo = new Map();
+        circle.forEach(cid => Store.connectionsOf(cid).forEach(other => {
+          if (circle.has(other)) return;
+          tiedTo.set(other, [...(tiedTo.get(other) || []), cid]);
+        }));
+        // People whose events you can see through a connection (e.g. Jo on
+        // a family event Bella tagged) but who aren't one of your own people
+        // -- otherwise there'd be nowhere to pick their color.
+        const knownIds = new Set(Store.getKnownPeople(userId).map(p => p.id));
+        const others = Store.connectionsOf(userId).length
+          ? Array.from(new Set(Store.getEvents().map(e => e.ownerId))).filter(id => id && !knownIds.has(id) && !tiedTo.has(id) && Store.getAccount(id))
+          : [];
+        const rows = [...tiedTo].map(([id, ofIds]) => personRow(id,
+          `Connected to ${ofIds.map(x => (x === userId ? 'you' : nameOf(x))).join(', ')}`, 'Remove')).join('');
+        el.innerHTML = `
+          ${rows || '<p class="st-empty">No connections yet.</p>'}
+          ${others.length ? `<p class="st-subhead">Others on events you can see</p>${others.map(id => personRow(id, '', '')).join('')}` : ''}
+        `;
+        wireColorInputs(el);
+        el.querySelectorAll('.st-remove').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const id = btn.dataset.person;
+            if (!confirm(`Remove ${nameOf(id)} as a connection? You'll stop seeing each other's events and can't add to each other's calendars anymore.`)) return;
+            Store.removeViewer(id);
+            renderPeople();
+            Calendar.render();
+          });
+        });
+      }
+
+      // Viewers: plain 1:1 links (stored as `connections`) -- everyone you
+      // know who isn't in your household or tied to you as a connection.
+      function renderViewersCard() {
+        const listEl = root.querySelector('#st-viewers-list');
+        const skip = new Set(Store.getHouseholdsFor(userId).flatMap(h => h.memberIds));
+        Store.viewersOf(userId).forEach(id => skip.add(id));
+        Store.viewedBy(userId).forEach(id => skip.add(id));
+        const people = Store.getKnownPeople(userId).filter(p => p.id !== userId && !skip.has(p.id));
+        listEl.innerHTML = people.length ? people.map(p => personRow(p.id, '', 'Remove')).join('') : '<p class="st-empty">No viewers yet.</p>';
+        wireColorInputs(listEl);
+        listEl.querySelectorAll('.st-remove').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const id = btn.dataset.person;
+            if (!confirm(`Remove ${nameOf(id)} as a viewer? You'll stop seeing each other's shared events.`)) return;
+            Store.removeConnection(userId, id);
+            renderPeople();
+            Calendar.render();
+          });
+        });
+      }
+
+      // Flat list of everyone known, in this user's own custom order (see
+      // Store.getPersonOrder) -- feeds Store.getKnownPeople everywhere it's
+      // used, including the event editor's Participants picker.
       function renderPeopleOrder() {
         const listEl = root.querySelector('#st-people-order-list');
         if (!listEl) return;
@@ -662,216 +808,18 @@ const Settings = {
           listEl.appendChild(row);
         });
       }
-      renderPeopleOrder();
       makeSortable(root.querySelector('#st-people-order-list'), orderedIds => {
         Store.setPersonOrder(userId, orderedIds);
         renderPeopleOrder();
       });
 
-      let currentInviteCode = null;
-      Store.getOrCreateInvite('individual_connect', userId).then(code => { currentInviteCode = code; });
-      root.querySelector('#st-copy-invite').addEventListener('click', () => {
-        if (currentInviteCode) copyToClipboard(inviteUrl(currentInviteCode));
-      });
-      root.querySelector('#st-revoke-invite').addEventListener('click', async () => {
-        if (currentInviteCode) await Store.revokeInvite(currentInviteCode);
-        currentInviteCode = await Store.getOrCreateInvite('individual_connect', userId);
-      });
-
-      root.querySelector('#st-accept-code-btn').addEventListener('click', async () => {
-        const raw = root.querySelector('#st-accept-code').value.trim();
-        const code = raw.includes('invite=') ? raw.split('invite=')[1].split('&')[0] : raw;
-        const resultEl = root.querySelector('#st-accept-result');
-        if (!code) return;
-        const result = await Store.acceptInvite(code, userId);
-        if (result.ok) {
-          resultEl.textContent = 'Connected!';
-          root.querySelector('#st-accept-code').value = '';
-          renderConnections();
-          renderHouseholds();
-          Calendar.render();
-        } else {
-          resultEl.textContent = result.reason;
-        }
-      });
-
-      function renderHouseholds() {
-        const listEl = root.querySelector('#st-households-list');
-        listEl.innerHTML = '';
-        Store.getHouseholdsFor(userId).forEach(h => {
-          const wrap = document.createElement('div');
-          wrap.style.cssText = 'border:0.5px solid var(--border);border-radius:10px;padding:10px;margin-bottom:10px;';
-          const memberRows = h.memberIds.map(id => {
-            const a = Store.getAccount(id);
-            const isMe = id === userId;
-            const viewColor = isMe ? null : Store.colorFor(userId, id);
-            return `
-              <div style="display:flex;align-items:center;justify-content:space-between;padding:2px 0;gap:8px;">
-                <span style="display:flex;align-items:center;gap:8px;min-width:0;">
-                  ${isMe ? '' : `
-                    <span class="avatar-color-wrap">
-                      <span class="avatar-mini avatar-color-btn" style="background:${viewColor};">${initials(a ? a.name : '?')}</span>
-                      <input type="color" class="avatar-color-input color-input-overlay" data-color-for="${id}" aria-label="Change ${escapeAttr(a ? a.name : '')}'s color" value="${viewColor}">
-                    </span>
-                  `}
-                  <span>${escapeAttr(a ? a.name : '?')}${isMe ? ' (you)' : ''}</span>
-                </span>
-                <button type="button" class="link-btn" data-member-action="${isMe ? 'leave' : 'remove'}" data-member-id="${id}" style="color:var(--text-danger,#c0392b); flex-shrink:0;">${isMe ? 'Leave' : 'Remove'}</button>
-              </div>
-            `;
-          }).join('');
-          wrap.innerHTML = `
-            <p style="font-weight:500;margin:0 0 4px;">${escapeAttr(h.name)}</p>
-            <div style="margin:0 0 8px;">${memberRows}</div>
-            <button type="button" class="link-btn" data-action="connect">Copy invite link</button>
-          `;
-          wrap.querySelectorAll('[data-color-for]').forEach(input => {
-            input.addEventListener('input', e => {
-              Store.setColorForPerson(userId, input.dataset.colorFor, e.target.value);
-              input.closest('.avatar-color-wrap').querySelector('.avatar-color-btn').style.background = e.target.value;
-              Calendar.render();
-            });
-          });
-          wrap.querySelectorAll('[data-member-action]').forEach(btn => {
-            btn.addEventListener('click', () => {
-              const memberId = btn.dataset.memberId;
-              const isLeave = btn.dataset.memberAction === 'leave';
-              const memberAccount = Store.getAccount(memberId);
-              const confirmMsg = isLeave
-                ? `Leave "${h.name}"? You'll lose shared access with everyone in it.`
-                : `Remove ${memberAccount ? memberAccount.name : 'this person'} from "${h.name}"?`;
-              if (!confirm(confirmMsg)) return;
-              Store.removeHouseholdMember(h.id, memberId);
-              renderHouseholds();
-              Calendar.render();
-            });
-          });
-          wrap.querySelector('[data-action="connect"]').addEventListener('click', async () => {
-            const code = await Store.getOrCreateInvite('household_connect', userId, h.id);
-            copyToClipboard(inviteUrl(code));
-          });
-          listEl.appendChild(wrap);
-        });
+      function renderPeople() {
+        renderHouseholds();
+        renderConnectionsCard();
+        renderViewersCard();
+        renderPeopleOrder();
       }
-      renderHouseholds();
-
-      // Viewers: people (e.g. a parent) who can see chosen household
-      // members' shared events but can't change them -- see Store.viewersOf.
-      function renderViewers() {
-        const el = root.querySelector('#st-viewers');
-        const nameOf = id => (Store.getAccount(id) || {}).name || '?';
-        const circle = new Set([userId]);
-        Store.getHouseholdsFor(userId).forEach(h => h.memberIds.forEach(id => circle.add(id)));
-        const grants = Store.getViewerGrants().filter(g => circle.has(g.ofUid) && g.viewerId !== userId);
-        const byViewer = new Map();
-        grants.forEach(g => byViewer.set(g.viewerId, [...(byViewer.get(g.viewerId) || []), g.ofUid]));
-        const iView = Store.viewedBy(userId);
-        // People whose events you can see (e.g. family events Bella or Nick
-        // are tagged on) but who aren't one of your own people -- otherwise
-        // there'd be nowhere to pick the color their events show in for you.
-        const knownIds = new Set(Store.getKnownPeople(userId).map(p => p.id));
-        const othersOnEvents = iView.length
-          ? Array.from(new Set(Store.getEvents().map(e => e.ownerId))).filter(id => id && !knownIds.has(id) && Store.getAccount(id))
-          : [];
-        el.innerHTML = `
-          <p style="font-weight:500;margin:0 0 2px;">Viewers</p>
-          <p class="muted" style="margin:0 0 6px;">Viewers can see the shared events of the people you pick, but can't change anything. Those people can add appointments to the viewer's calendar for them.</p>
-          ${iView.length ? `<p class="muted" style="margin:0 0 4px;">You're a viewer of:</p><div id="st-viewing-list" style="margin-bottom:6px;"></div>` : ''}
-          ${othersOnEvents.length ? `<p class="muted" style="margin:0 0 4px;">Others on events you can see:</p><div id="st-others-list" style="margin-bottom:6px;"></div>` : ''}
-          <div id="st-viewers-list"></div>
-          ${circle.size > 1 ? '<button type="button" class="link-btn" id="st-invite-viewer">Invite a viewer</button>' : ''}
-        `;
-        // Tap-to-change color icon, same as the household list -- viewers
-        // are kept out of the Connections list, so this is their color picker.
-        const colorAvatar = id => {
-          const c = Store.colorFor(userId, id);
-          return `<span class="avatar-color-wrap">
-            <span class="avatar-mini avatar-color-btn" style="background:${c};">${initials(nameOf(id))}</span>
-            <input type="color" class="avatar-color-input color-input-overlay" data-color-for="${id}" aria-label="Change ${escapeAttr(nameOf(id))}'s color" value="${c}">
-          </span>`;
-        };
-        const viewingEl = el.querySelector('#st-viewing-list');
-        if (viewingEl) viewingEl.innerHTML = iView.map(id => `
-          <div style="display:flex;align-items:center;gap:8px;padding:2px 0;">${colorAvatar(id)}<span>${escapeHTML(nameOf(id))}</span></div>
-        `).join('');
-        const othersEl = el.querySelector('#st-others-list');
-        if (othersEl) othersEl.innerHTML = othersOnEvents.map(id => `
-          <div style="display:flex;align-items:center;gap:8px;padding:2px 0;">${colorAvatar(id)}<span>${escapeHTML(nameOf(id))}</span></div>
-        `).join('');
-        const listEl = el.querySelector('#st-viewers-list');
-        byViewer.forEach((ofIds, viewerId) => {
-          const row = document.createElement('div');
-          row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;padding:2px 0;';
-          row.innerHTML = `
-            <span style="display:flex;align-items:center;gap:8px;min-width:0;">${colorAvatar(viewerId)}<span>${escapeHTML(nameOf(viewerId))} <span class="muted">sees ${escapeHTML(ofIds.map(id => id === userId ? 'you' : nameOf(id)).join(', '))}</span></span></span>
-            <button type="button" class="link-btn" style="color:var(--text-danger,#c0392b);flex-shrink:0;">Remove</button>
-          `;
-          row.querySelector('button.link-btn').addEventListener('click', () => {
-            if (!confirm(`Remove ${nameOf(viewerId)} as a viewer? They'll stop seeing these calendars.`)) return;
-            Store.removeViewer(viewerId);
-            renderViewers();
-            Calendar.render();
-          });
-          listEl.appendChild(row);
-        });
-        el.querySelectorAll('[data-color-for]').forEach(input => {
-          input.addEventListener('input', e => {
-            Store.setColorForPerson(userId, input.dataset.colorFor, e.target.value);
-            input.closest('.avatar-color-wrap').querySelector('.avatar-color-btn').style.background = e.target.value;
-            Calendar.render();
-          });
-        });
-        const inviteBtn = el.querySelector('#st-invite-viewer');
-        if (inviteBtn) inviteBtn.addEventListener('click', () => openViewerInvite(Array.from(circle)));
-        // Not in a household and nobody to show: skip the section entirely.
-        if (circle.size <= 1 && !iView.length && !byViewer.size) el.innerHTML = '';
-      }
-      renderViewers();
-
-      function openViewerInvite(circleIds) {
-        const people = circleIds.map(id => Store.getAccount(id)).filter(Boolean)
-          .sort((a, b) => (a.id === userId ? -1 : b.id === userId ? 1 : 0));
-        openModal(`
-          <div class="modal-header"><h2>Invite a viewer</h2><button class="modal-close" id="vi-close">${icon('x')}</button></div>
-          <p class="muted" style="margin-top:0;">Whose calendars can they see?</p>
-          <div id="vi-people">
-            ${people.map(p => `<label class="checkbox-row" style="display:flex;gap:8px;align-items:center;margin:6px 0;"><input type="checkbox" value="${p.id}" ${p.id === userId ? 'checked' : ''}> ${escapeHTML(p.name)}${p.id === userId ? ' (you)' : ''}</label>`).join('')}
-          </div>
-          <button class="btn btn-primary" id="vi-create" style="width:100%;margin-top:10px;">Create invite link</button>
-          <div id="vi-result" class="hidden" style="margin-top:12px;">
-            <p class="muted" style="margin:0 0 6px;">Send this link to them:</p>
-            <div class="field-row">
-              <input type="text" id="vi-link" readonly style="flex:1;">
-              <button class="btn" id="vi-copy">Copy</button>
-            </div>
-            <p class="muted hidden" id="vi-copied" style="margin:6px 0 0;">Copied.</p>
-          </div>
-        `, r => {
-          const close = () => { closeModal(); Settings.openModal(); };
-          r.querySelector('#vi-close').addEventListener('click', close);
-          r.querySelector('#vi-create').addEventListener('click', async e => {
-            const viewOf = Array.from(r.querySelectorAll('#vi-people input:checked')).map(cb => cb.value);
-            if (!viewOf.length) return;
-            e.target.disabled = true;
-            try {
-              const code = await Store.createViewerInvite(userId, viewOf);
-              r.querySelector('#vi-link').value = inviteUrl(code);
-              r.querySelector('#vi-result').classList.remove('hidden');
-              r.querySelectorAll('#vi-people input').forEach(cb => { cb.disabled = true; });
-              e.target.classList.add('hidden');
-            } catch (err) {
-              e.target.disabled = false;
-              alert("Couldn't create the link -- check your connection and try again.");
-            }
-          });
-          r.querySelector('#vi-copy').addEventListener('click', () => {
-            const input = r.querySelector('#vi-link');
-            copyToClipboard(input.value);
-            input.select();
-            r.querySelector('#vi-copied').classList.remove('hidden');
-          });
-        });
-      }
+      renderPeople();
 
       root.querySelector('#st-create-household').addEventListener('click', () => {
         const nameInput = root.querySelector('#st-household-name');
@@ -879,8 +827,143 @@ const Settings = {
         if (!name) return;
         Store.createHousehold(name, userId);
         nameInput.value = '';
-        renderHouseholds();
+        renderPeople();
       });
+
+      root.querySelector('#st-accept-toggle').addEventListener('click', () => {
+        root.querySelector('#st-accept-wrap').classList.toggle('hidden');
+      });
+      root.querySelector('#st-accept-code-btn').addEventListener('click', async () => {
+        const raw = root.querySelector('#st-accept-code').value.trim();
+        const code = raw.includes('invite=') ? raw.split('invite=')[1].split('&')[0] : raw;
+        const resultEl = root.querySelector('#st-accept-result');
+        if (!code) return;
+        const result = await Store.acceptInvite(code, userId);
+        if (result.ok) {
+          resultEl.textContent = 'You\'re in.';
+          root.querySelector('#st-accept-code').value = '';
+          renderPeople();
+          Calendar.render();
+        } else {
+          resultEl.textContent = result.reason;
+        }
+      });
+
+      root.querySelector('#st-invite').addEventListener('click', () => openInvite());
+
+      // One invite button for all three kinds -- the person inviting picks
+      // what the other person should be able to do, so nobody has to
+      // remember which word means what.
+      function openInvite() {
+        const households = Store.getHouseholdsFor(userId);
+        const circle = new Set([userId]);
+        households.forEach(h => h.memberIds.forEach(id => circle.add(id)));
+        const people = Array.from(circle).map(id => Store.getAccount(id)).filter(Boolean)
+          .sort((a, b) => (a.id === userId ? -1 : b.id === userId ? 1 : 0));
+        const option = (kind, title, desc, extra) => `
+          <label class="st-invite-opt" data-kind="${kind}">
+            <span class="st-invite-opt-head"><input type="radio" name="inv-kind" value="${kind}"><span>${title}</span></span>
+            <span class="st-row-sub">${desc}</span>
+            ${extra ? `<div class="st-invite-extra hidden">${extra}</div>` : ''}
+          </label>`;
+        const householdExtra = households.length > 1
+          ? `<label class="st-row-sub" style="display:block;margin:8px 0 4px;">Which household?</label>
+             <select id="inv-household">${households.map(h => `<option value="${h.id}">${escapeHTML(h.name)}</option>`).join('')}</select>`
+          : households.length ? '' : `<p class="st-row-sub" style="margin:8px 0 0;">Create your household first on the People page.</p>`;
+        const connectionExtra = `
+          <span class="st-row-sub" style="display:block;margin:8px 0 2px;">Connect them to:</span>
+          ${people.map(p => `<label class="st-check"><input type="checkbox" class="inv-person" value="${p.id}" ${p.id === userId ? 'checked' : ''}><span>${escapeHTML(p.name)}${p.id === userId ? ' (you)' : ''}</span></label>`).join('')}`;
+
+        openModal(`
+          <div class="modal-header"><h2>Invite someone</h2><button class="modal-close" id="inv-close" aria-label="Close">${icon('x')}</button></div>
+          <p style="margin:0 0 10px;">What should they be able to do?</p>
+          ${option('household', 'Household', "Add, edit, and delete each other's events. For people you live with.", householdExtra)}
+          ${option('connection', 'Connection', "See each other's events and add to each other's calendars. Each person can only change what they added.", connectionExtra)}
+          ${option('viewer', 'Viewer', 'Only see the events you each share. Neither of you can change anything.', '')}
+          <p class="muted hidden" id="inv-error" style="color:var(--text-danger,#c0392b);margin:4px 0 0;"></p>
+          <button class="btn btn-primary" id="inv-create" style="width:100%;margin-top:10px;">Create invite link</button>
+          <div id="inv-result" class="hidden" style="margin-top:12px;">
+            <p class="muted" style="margin:0 0 6px;">Send this link to them:</p>
+            <div class="field-row">
+              <input type="text" id="inv-link" readonly style="flex:1;">
+              <button class="btn" id="inv-copy">Copy</button>
+            </div>
+            <p class="muted hidden" id="inv-copied" style="margin:6px 0 0;">Copied.</p>
+            <button type="button" class="link-btn hidden" id="inv-revoke">Get a new link (the old one stops working)</button>
+          </div>
+        `, r => {
+          const close = () => { closeModal(); Settings.openModal('people'); };
+          r.querySelector('#inv-close').addEventListener('click', close);
+          const errorEl = r.querySelector('#inv-error');
+          const createBtn = r.querySelector('#inv-create');
+          const resultEl = r.querySelector('#inv-result');
+          const showError = msg => { errorEl.textContent = msg; errorEl.classList.remove('hidden'); };
+          let kind = null;
+          let viewerCode = null;
+          r.querySelectorAll('input[name="inv-kind"]').forEach(radio => {
+            radio.addEventListener('change', () => {
+              kind = radio.value;
+              r.querySelectorAll('.st-invite-opt').forEach(opt => {
+                const on = opt.dataset.kind === kind;
+                opt.classList.toggle('selected', on);
+                const extra = opt.querySelector('.st-invite-extra');
+                if (extra) extra.classList.toggle('hidden', !on);
+              });
+              errorEl.classList.add('hidden');
+              resultEl.classList.add('hidden');
+              createBtn.classList.remove('hidden');
+              createBtn.disabled = false;
+            });
+          });
+          r.querySelectorAll('.inv-person').forEach(cb => cb.addEventListener('change', () => errorEl.classList.add('hidden')));
+          const showLink = code => {
+            r.querySelector('#inv-link').value = inviteUrl(code);
+            r.querySelector('#inv-copied').classList.add('hidden');
+            r.querySelector('#inv-revoke').classList.toggle('hidden', kind !== 'viewer');
+            resultEl.classList.remove('hidden');
+            createBtn.classList.add('hidden');
+          };
+          createBtn.addEventListener('click', async () => {
+            if (!kind) { showError('Pick one of the options first.'); return; }
+            let code = null;
+            createBtn.disabled = true;
+            try {
+              if (kind === 'household') {
+                if (!households.length) { showError('Create your household first on the People page.'); createBtn.disabled = false; return; }
+                const sel = r.querySelector('#inv-household');
+                code = await Store.getOrCreateInvite('household_connect', userId, sel ? sel.value : households[0].id);
+              } else if (kind === 'connection') {
+                const ofIds = Array.from(r.querySelectorAll('.inv-person:checked')).map(cb => cb.value);
+                if (!ofIds.length) { showError('Pick at least one person to connect them to.'); createBtn.disabled = false; return; }
+                code = await Store.createViewerInvite(userId, ofIds);
+              } else {
+                code = viewerCode = await Store.getOrCreateInvite('individual_connect', userId);
+              }
+            } catch (err) {
+              createBtn.disabled = false;
+              showError("Couldn't create the link. Check your connection and try again.");
+              return;
+            }
+            showLink(code);
+          });
+          r.querySelector('#inv-copy').addEventListener('click', () => {
+            const input = r.querySelector('#inv-link');
+            copyToClipboard(input.value);
+            input.select();
+            r.querySelector('#inv-copied').classList.remove('hidden');
+          });
+          r.querySelector('#inv-revoke').addEventListener('click', async () => {
+            if (!confirm('Make a new link? Anyone who has the old one won\'t be able to use it.')) return;
+            try {
+              if (viewerCode) await Store.revokeInvite(viewerCode);
+              viewerCode = await Store.getOrCreateInvite('individual_connect', userId);
+              showLink(viewerCode);
+            } catch (err) {
+              showError("Couldn't make a new link. Check your connection and try again.");
+            }
+          });
+        });
+      }
 
       const bgGrid = root.querySelector('#st-bg-grid');
       function refreshBgGrid(selectedColor) {

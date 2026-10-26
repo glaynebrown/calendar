@@ -120,15 +120,105 @@ service cloud.firestore {
     // now, not for a plain connection) -- this part IS a single-doc check,
     // so it can use editIndex's richer get()-based logic without the
     // list-query restriction above applying.
+    // Viewer grants: "viewerId can see ofUid's shared events." Readable by
+    // every signed-in user (like households) because saving ANY event needs
+    // the viewers of every participant. Only the viewer creates them, and
+    // only for the people listed on a live 'viewer' invite they hold.
+    // Removable by the viewer, the person viewed, whoever made the invite,
+    // or anyone with edit rights on the viewed person's calendar.
+    match /viewers/{id} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn()
+        && request.auth.uid == request.resource.data.viewerId
+        && id == request.resource.data.viewerId + '_' + request.resource.data.ofUid
+        && get(/databases/$(database)/documents/invites/$(request.resource.data.inviteCode)).data.type == 'viewer'
+        && get(/databases/$(database)/documents/invites/$(request.resource.data.inviteCode)).data.revoked == false
+        && request.resource.data.ofUid in get(/databases/$(database)/documents/invites/$(request.resource.data.inviteCode)).data.viewOf
+        && request.resource.data.createdBy == get(/databases/$(database)/documents/invites/$(request.resource.data.inviteCode)).data.ownerId;
+      allow delete: if isSignedIn() && (
+        request.auth.uid == resource.data.viewerId ||
+        request.auth.uid == resource.data.ofUid ||
+        request.auth.uid == resource.data.createdBy ||
+        request.auth.uid in get(/databases/$(database)/documents/editIndex/$(resource.data.ofUid)).data.ids
+      );
+    }
+
+    // Who may add events to someone's calendar and change only the ones
+    // THEY added (connections -- see store.js's syncConnectIndex). Same
+    // shape as editIndex: private to its owner, only the owner writes it,
+    // except anyone may take exactly themselves off someone else's list.
+    // legacyEditors = old one-way helpers whose events from before
+    // connections were two-way (no createdBy) stay editable by them.
+    match /connectIndex/{uid} {
+      allow read: if isSignedIn() && request.auth.uid == uid;
+      allow create: if isSignedIn() && request.auth.uid == uid;
+      allow update: if isSignedIn() && (
+        request.auth.uid == uid ||
+        (request.auth.uid in resource.data.ids && !(request.auth.uid in request.resource.data.ids)
+          && request.resource.data.ids.size() == resource.data.ids.size() - 1
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ids']))
+      );
+    }
+
+    // createdBy = whoever added the event. Rights:
+    // - owner + household (editIndex): full control, EXCEPT an event one of
+    //   the owner's connections added -- that one is the connection's alone.
+    // - a connection (in the owner's connectIndex): can add events, and
+    //   change/delete only the ones they added (or, for events from before
+    //   createdBy existed, if they're one of the old legacyEditors).
+    // - anyone who can see it: may change only their own reminder/day order
+    //   (setMyReminder / setEventOrderForDate are targeted updates).
+    // Nobody can rewrite createdBy, and a connection can't move an event
+    // to someone else's calendar.
     match /events/{id} {
       allow read: if isSignedIn() && request.auth.uid in resource.data.visibleTo;
-      allow create: if isSignedIn() && (
-        request.auth.uid == request.resource.data.ownerId ||
-        request.auth.uid in get(/databases/$(database)/documents/editIndex/$(request.resource.data.ownerId)).data.ids
+      allow create: if isSignedIn()
+        && request.resource.data.get('createdBy', request.auth.uid) == request.auth.uid
+        && (
+          request.auth.uid == request.resource.data.ownerId ||
+          request.auth.uid in get(/databases/$(database)/documents/editIndex/$(request.resource.data.ownerId)).data.ids ||
+          (exists(/databases/$(database)/documents/connectIndex/$(request.resource.data.ownerId))
+            && request.auth.uid in get(/databases/$(database)/documents/connectIndex/$(request.resource.data.ownerId)).data.ids)
+        );
+      allow update: if isSignedIn() && (
+        (
+          request.resource.data.get('createdBy', '') == resource.data.get('createdBy', '')
+          && (
+            (
+              (request.auth.uid == resource.data.ownerId ||
+                request.auth.uid in get(/databases/$(database)/documents/editIndex/$(resource.data.ownerId)).data.ids)
+              && !(resource.data.get('createdBy', request.auth.uid) != request.auth.uid
+                && exists(/databases/$(database)/documents/connectIndex/$(resource.data.ownerId))
+                && resource.data.get('createdBy', '') in get(/databases/$(database)/documents/connectIndex/$(resource.data.ownerId)).data.ids)
+            ) ||
+            (
+              request.resource.data.ownerId == resource.data.ownerId
+              && exists(/databases/$(database)/documents/connectIndex/$(resource.data.ownerId))
+              && request.auth.uid in get(/databases/$(database)/documents/connectIndex/$(resource.data.ownerId)).data.ids
+              && (resource.data.get('createdBy', '') == request.auth.uid
+                || (!('createdBy' in resource.data)
+                  && request.auth.uid in get(/databases/$(database)/documents/connectIndex/$(resource.data.ownerId)).data.get('legacyEditors', [])))
+            )
+          )
+        ) ||
+        (request.auth.uid in resource.data.visibleTo
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reminders', 'hasReminders', 'orderByDate']))
       );
-      allow update, delete: if isSignedIn() && (
-        request.auth.uid == resource.data.ownerId ||
-        request.auth.uid in get(/databases/$(database)/documents/editIndex/$(resource.data.ownerId)).data.ids
+      allow delete: if isSignedIn() && (
+        (
+          (request.auth.uid == resource.data.ownerId ||
+            request.auth.uid in get(/databases/$(database)/documents/editIndex/$(resource.data.ownerId)).data.ids)
+          && !(resource.data.get('createdBy', request.auth.uid) != request.auth.uid
+            && exists(/databases/$(database)/documents/connectIndex/$(resource.data.ownerId))
+            && resource.data.get('createdBy', '') in get(/databases/$(database)/documents/connectIndex/$(resource.data.ownerId)).data.ids)
+        ) ||
+        (
+          exists(/databases/$(database)/documents/connectIndex/$(resource.data.ownerId))
+          && request.auth.uid in get(/databases/$(database)/documents/connectIndex/$(resource.data.ownerId)).data.ids
+          && (resource.data.get('createdBy', '') == request.auth.uid
+            || (!('createdBy' in resource.data)
+              && request.auth.uid in get(/databases/$(database)/documents/connectIndex/$(resource.data.ownerId)).data.get('legacyEditors', [])))
+        )
       );
     }
 
@@ -201,6 +291,36 @@ service cloud.firestore {
         request.auth.uid in resource.data.sharedWith
       );
       allow delete: if isSignedIn() && request.auth.uid == resource.data.ownerId;
+    }
+
+    // Date notes ("Mom flies home") -- short calendar labels that aren't
+    // events. visibleTo is the explicit list of people it's shared with;
+    // anyone on it can edit, re-share or delete it (agreed design, same as
+    // events). The owner can't be swapped out, and whoever saves it must
+    // stay on the list so a save can never orphan the note.
+    // Your own look (colors/photo) for a shared list -- private to you.
+    match /noteLooks/{id} {
+      allow read, delete: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow create, update: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid
+        && id == request.auth.uid + '_' + request.resource.data.noteId
+        && (resource == null || resource.data.uid == request.auth.uid);
+    }
+
+    match /dateNotes/{id} {
+      allow read: if isSignedIn() && request.auth.uid in resource.data.visibleTo;
+      allow create: if isSignedIn()
+        && request.auth.uid == request.resource.data.ownerId
+        && request.resource.data.visibleTo is list
+        && request.auth.uid in request.resource.data.visibleTo
+        && request.resource.data.visibleTo.size() <= 50;
+      allow update: if isSignedIn()
+        && request.auth.uid in resource.data.visibleTo
+        && request.resource.data.ownerId == resource.data.ownerId
+        && request.resource.data.visibleTo is list
+        && request.auth.uid in request.resource.data.visibleTo
+        && request.resource.data.visibleTo.size() <= 50;
+      allow delete: if isSignedIn() && request.auth.uid in resource.data.visibleTo;
     }
 
     // Birthday records -- same denormalized-visibleTo pattern as events/notes

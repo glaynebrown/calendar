@@ -743,6 +743,49 @@ html.has-text-override .bottom-tab.active {
 .avatar-mini { width: 26px; height: 26px; border-radius: 50%; background-size: cover; background-position: center; display: flex; align-items: center; justify-content: center; font-size: 10px; color: #fff; font-weight: 500; }
 .avatar-color-btn { border: none; padding: 0; cursor: pointer; font: inherit; flex-shrink: 0; }
 
+/* Settings: iPhone-style menu of rows, each opening its own page */
+.st-group { background: var(--surface-2); border: 0.5px solid var(--border); border-radius: 12px; overflow: hidden; margin-bottom: 16px; }
+.st-row { display: flex; align-items: center; gap: 12px; width: 100%; padding: 11px 12px; background: none; border: none; border-bottom: 0.5px solid var(--border); color: var(--text); font: inherit; font-size: 15px; text-align: left; cursor: pointer; }
+.st-row:last-child { border-bottom: none; }
+.st-row:active { background: var(--border); }
+.st-row-icon { width: 30px; height: 30px; border-radius: 8px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; background: var(--accent); color: var(--accent-text); }
+.st-row-icon svg { width: 17px; height: 17px; }
+.st-row-label { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.st-row-sub { display: block; font-size: 12px; color: var(--text-secondary); font-weight: normal; margin-top: 1px; }
+.st-chev { color: var(--text-muted); display: flex; flex-shrink: 0; }
+.st-chev svg { width: 16px; height: 16px; }
+.st-row-profile .st-profile-avatar { width: 40px; height: 40px; font-size: 14px; }
+.st-row-profile .st-row-label > span:first-child { font-weight: 500; }
+.st-row-body { padding: 10px 12px 12px; border-bottom: 0.5px solid var(--border); }
+.st-page-header { gap: 8px; position: relative; }
+.st-page-header h2 { position: absolute; left: 50%; transform: translateX(-50%); white-space: nowrap; pointer-events: none; }
+.st-back { display: flex; align-items: center; gap: 2px; background: none; border: none; padding: 4px 0; color: var(--accent); font: inherit; font-size: 15px; cursor: pointer; }
+.st-back svg { width: 20px; height: 20px; }
+.st-card { background: var(--surface-2); border: 0.5px solid var(--border); border-radius: 12px; padding: 12px; margin-bottom: 12px; }
+.st-card-title { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
+.st-perms { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.perm-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 500; padding: 3px 9px; border-radius: 999px; background: var(--surface); border: 0.5px solid var(--border-strong); color: var(--text); }
+.perm-chip svg { width: 13px; height: 13px; color: var(--accent); }
+.perm-chip-soft { font-weight: normal; color: var(--text-secondary); }
+.st-card-note { font-size: 13px; color: var(--text-secondary); margin: 0 0 8px; line-height: 1.4; }
+.st-person { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-top: 0.5px solid var(--border); }
+.st-person-name { flex: 1; min-width: 0; font-size: 14px; }
+.st-remove { color: var(--text-danger, #c0392b); flex-shrink: 0; }
+.st-household-name { font-weight: 500; margin: 6px 0 2px; font-size: 13px; }
+.st-subhead { font-size: 12px; color: var(--text-secondary); margin: 10px 0 2px; }
+.st-empty { font-size: 13px; color: var(--text-muted); margin: 4px 0 0; padding-top: 6px; border-top: 0.5px solid var(--border); }
+.st-invite-btn { width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 4px; }
+.st-invite-btn svg { width: 18px; height: 18px; }
+.st-people-hint { text-align: center; margin: 8px 0 16px; font-size: 12px; }
+.st-invite-opt { display: block; border: 0.5px solid var(--border-strong); border-radius: 12px; padding: 10px 12px; margin-bottom: 8px; cursor: pointer; }
+.st-invite-opt.selected { border: 2px solid var(--accent); padding: 9px 11px; }
+.st-invite-opt-head { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 15px; }
+.st-invite-opt-head input { margin: 0; accent-color: var(--accent); }
+.st-invite-extra select { width: 100%; }
+.st-check { display: flex; align-items: center; justify-content: flex-start; gap: 10px; margin: 6px 0; font-size: 14px; font-weight: normal; }
+.st-check input { margin: 0; width: 18px; height: 18px; accent-color: var(--accent); }
+.st-person .avatar-mini { font-size: 11px; }
+
 .settings-section { margin-bottom: 20px; }
 .settings-section h3 { font-size: 13px; font-weight: 500; color: var(--text-secondary); margin: 0 0 8px; text-transform: uppercase; letter-spacing: 0.03em; }
 

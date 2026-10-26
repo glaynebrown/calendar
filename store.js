@@ -58,6 +58,7 @@ const _cache = {
   noteLooks: {},      // the CURRENT user's own look (colors/photo) for shared lists, keyed by note id (private)
   viewerGrants: [],   // connection ties: { viewerId, ofUid, createdBy, twoWay? } -- see viewersOf/canEditEvent
   connectIndex: null, // the CURRENT user's own connectIndex doc { ids, legacyEditors } (private) -- see syncConnectIndex
+  reminders: [],      // standalone reminders ("Blood pressure pill, every day at 8") -- ones I made or I'm reminded by
   dateNotes: [],      // short calendar labels ("Mom flies home") -- own plus any shared with the current user
   monthThemes: {}, monthThemesReady: false,               // own per-month background overrides, one Firestore doc each (private)
   plannerMonthThemes: {}, plannerMonthThemesReady: false,  // same, for the planner's own override tier (private)
@@ -167,6 +168,43 @@ function computeBirthdayVisibleTo(ownerId, shared) {
 // reach the specific people they pick (you share with Nick, Jo shares with
 // Jason, your sister shares with no one), so this is just the owner plus an
 // explicit list, same pattern as a note's sharedWith.
+// ---- standalone reminders: when they happen. Same logic is copied in
+// scripts/send-reminders.js (keep in sync). repeat = { type: 'once' |
+// 'daily' | 'weekly' | 'monthly', date: 'YYYY-MM-DD' (the date, or the
+// start date), days: [0-6] for weekly (0 = Sunday) }. Monthly uses the
+// start date's day of the month (the last day in shorter months). ----
+function reminderOccursOn(r, dateStr) {
+  const rep = r.repeat || {};
+  if (!rep.date || dateStr < rep.date) return false;
+  if (rep.type === 'daily') return true;
+  if (rep.type === 'weekly') return (rep.days || []).includes(parseISO(dateStr).getDay());
+  if (rep.type === 'monthly') {
+    const d = parseISO(dateStr);
+    const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+    return d.getDate() === Math.min(parseISO(rep.date).getDate(), lastDay);
+  }
+  return dateStr === rep.date;
+}
+// First date strictly after `afterStr` it happens on, or null (a one-time
+// reminder that's passed).
+function reminderNextDate(r, afterStr) {
+  const d = parseISO(afterStr);
+  for (let i = 0; i < 400; i++) {
+    d.setDate(d.getDate() + 1);
+    const str = formatISO(d);
+    if (reminderOccursOn(r, str)) return str;
+  }
+  return null;
+}
+// When it next goes off from now, on this device's clock (the reminder's
+// timeZone is this device's, set when it's saved): { nextOccDate, nextDueAt }.
+function reminderNextDue(r) {
+  const today = formatISO(new Date());
+  const at = dateStr => new Date(`${dateStr}T${r.time || '09:00'}:00`).getTime();
+  let d = reminderOccursOn(r, today) && at(today) > Date.now() ? today : reminderNextDate(r, today);
+  return d ? { nextOccDate: d, nextDueAt: at(d) } : { nextOccDate: null, nextDueAt: null };
+}
+
 function computeCategoryVisibleTo(ownerId, sharedWith) {
   return Array.from(new Set([ownerId, ...(sharedWith || [])]));
 }
@@ -178,7 +216,7 @@ const Store = {
   startSync(userId) {
     this.stopSync();
     const db = firebase.firestore();
-    const pending = new Set(['accounts', 'connections-a', 'connections-b', 'households', 'events', 'categories', 'views', 'editTrust', 'notes', 'preferences', 'birthdays', 'birthdayNotes', 'dateNotes', 'viewers', 'connectIndex', 'noteLooks', 'monthThemes', 'plannerMonthThemes']);
+    const pending = new Set(['accounts', 'connections-a', 'connections-b', 'households', 'events', 'categories', 'views', 'editTrust', 'notes', 'preferences', 'birthdays', 'birthdayNotes', 'dateNotes', 'reminders', 'viewers', 'connectIndex', 'noteLooks', 'monthThemes', 'plannerMonthThemes']);
     // Just what the calendar needs to draw itself correctly (people, events,
     // filters, colors/theme). main.js shows the calendar as soon as these
     // are in; the rest (notes, birthdays, date notes, backgrounds) fill in
@@ -370,6 +408,19 @@ const Store = {
       }
     ));
 
+    // Standalone reminders (To-do tab) -- same visibleTo pattern: the
+    // person who made it plus everyone it reminds.
+    _unsubscribers.push(db.collection('reminders').where('visibleTo', 'array-contains', userId).onSnapshot(
+      snap => {
+        _cache.reminders = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        settle('reminders'); notify();
+      },
+      err => {
+        console.warn('Reminders sync failed:', err.code);
+        settle('reminders'); notify();
+      }
+    ));
+
     // Date notes -- short labels on the calendar that aren't events (see
     // getDateNotesForDate). Same visibleTo pattern and same settle-on-error
     // as notes above, so a rules-deploy gap can't hang the app.
@@ -428,7 +479,7 @@ const Store = {
     _cache.accounts = []; _cache.connections = []; _cache.households = [];
     _cache.events = []; _cache.categories = []; _cache.views = []; _cache.editTrust = [];
     _cache.notes = []; _cache.preferences = {};
-    _cache.birthdays = []; _cache.birthdayNotes = []; _cache.dateNotes = []; _cache.viewerGrants = []; _cache.connectIndex = null; _cache.noteLooks = {};
+    _cache.birthdays = []; _cache.birthdayNotes = []; _cache.dateNotes = []; _cache.reminders = []; _cache.viewerGrants = []; _cache.connectIndex = null; _cache.noteLooks = {};
     this._connectIndexReady = false;
     _cache.monthThemes = {}; _cache.monthThemesReady = false;
     _cache.plannerMonthThemes = {}; _cache.plannerMonthThemesReady = false;
@@ -1029,6 +1080,65 @@ const Store = {
       : { [field]: minutes, hasReminders: true };
     firebase.firestore().collection('events').doc(eventId).update(update);
   },
+  // ---- standalone reminders (To-do tab). Sent by scripts/send-reminders.js,
+  // which only reads ones whose nextDueAt has come (so lots of reminders
+  // never add up to lots of reads). state = this occurrence's progress:
+  // { occDate, n, first, last, alerted, doneBy, doneAt } -- one "Got it"
+  // from anyone it reminds counts for everyone. ----
+  getReminders() {
+    return _cache.reminders;
+  },
+  addReminder(r) {
+    const me = this.getCurrentUserId();
+    const id = uid();
+    const full = {
+      ...r, id, createdBy: me, createdAt: Date.now(),
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      visibleTo: Array.from(new Set([me, ...(r.remindIds || [])])),
+      ...reminderNextDue(r),
+    };
+    _cache.reminders.push(full);
+    firebase.firestore().collection('reminders').doc(id).set(full)
+      .catch(err => console.warn('Add reminder failed:', err.code));
+  },
+  updateReminder(id, patch) {
+    const idx = _cache.reminders.findIndex(r => r.id === id);
+    if (idx < 0) return;
+    const merged = { ..._cache.reminders[idx], ...patch, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone };
+    merged.visibleTo = Array.from(new Set([merged.createdBy, ...(merged.remindIds || [])]));
+    Object.assign(merged, reminderNextDue(merged));
+    _cache.reminders[idx] = merged;
+    firebase.firestore().collection('reminders').doc(id).set(merged)
+      .catch(err => console.warn('Update reminder failed:', err.code));
+  },
+  deleteReminder(id) {
+    _cache.reminders = _cache.reminders.filter(r => r.id !== id);
+    firebase.firestore().collection('reminders').doc(id).delete()
+      .catch(err => console.warn('Delete reminder failed:', err.code));
+  },
+  // Same rights as events: whoever made it, or their household. A
+  // connection's reminders are theirs alone.
+  canEditReminder(r) {
+    const me = this.getCurrentUserId();
+    return r.createdBy === me || (this.isEditTrusted(r.createdBy) && !this.isConnectionPair(me, r.createdBy));
+  },
+  // "Got it" for one day's reminder -- also works before it has gone off
+  // (e.g. trash already out), which stops it sending at all that day.
+  gotItReminder(id, occDate) {
+    const me = this.getCurrentUserId();
+    const idx = _cache.reminders.findIndex(r => r.id === id);
+    if (idx < 0) return;
+    const r = _cache.reminders[idx];
+    const db = firebase.firestore().collection('reminders').doc(id);
+    const now = Date.now();
+    if (r.state && r.state.occDate === occDate) {
+      _cache.reminders[idx] = { ...r, state: { ...r.state, doneBy: me, doneAt: now } };
+      db.update({ 'state.doneBy': me, 'state.doneAt': now }).catch(err => console.warn('Got it failed:', err.code));
+    } else {
+      _cache.reminders[idx] = { ...r, state: { occDate, doneBy: me, doneAt: now } };
+      db.update({ state: { occDate, doneBy: me, doneAt: now } }).catch(err => console.warn('Got it failed:', err.code));
+    }
+  },
   // "Got it" on a repeat reminder (see scripts/send-reminders.js) -- stops
   // the repeats for that one reminder. Targeted update like setMyReminder,
   // so anyone who can see the event can mark their OWN reminder as seen.
@@ -1055,6 +1165,13 @@ const Store = {
         if (out.some(p => p.event.id === e.id && p.occDate === occDate)) { out.push({ event: e, occDate, key, dup: true }); return; }
         out.push({ event: e, occDate, key });
       });
+    });
+    // Standalone reminders that have gone off for me and nobody's tapped
+    // Got it on yet.
+    _cache.reminders.forEach(r => {
+      const st = r.state;
+      if (!st || st.doneBy || !(st.first > cutoff) || !(r.remindIds || []).includes(userId)) return;
+      out.push({ reminder: r, event: { id: r.id, title: r.title, time: r.time }, occDate: st.occDate, key: 'reminder' });
     });
     return out;
   },

@@ -178,11 +178,9 @@ const Todo = {
       if (cb) contentScrollTops[card.dataset.id] = cb.scrollTop;
     });
     list.innerHTML = '';
+    this.renderRemindersStrip(list, userId);
 
-    if (!notes.length) {
-      list.innerHTML = '<p class="note-empty">No sticky notes yet. Tap + to add one.</p>';
-      return;
-    }
+    if (!notes.length) return;
 
     notes.forEach(note => {
       const card = document.createElement('div');
@@ -913,6 +911,236 @@ const Todo = {
     });
   },
 
+  // ---- standalone reminders ("Blood pressure pill, every day at 8 AM").
+  // Data + timing live in store.js (reminderOccursOn etc); sending is
+  // scripts/send-reminders.js. ----
+  reminderScheduleText(r) {
+    const rep = r.repeat || {};
+    const time = r.time ? formatTime12(r.time) : '';
+    const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    if (rep.type === 'daily') return `Every day at ${time}`;
+    if (rep.type === 'weekly') {
+      const days = (rep.days || []).slice().sort();
+      const label = days.length === 7 ? 'Every day' : days.length === 5 && !days.includes(0) && !days.includes(6) ? 'Weekdays' : days.map(d => DAYS[d]).join(', ');
+      return `${label} at ${time}`;
+    }
+    if (rep.type === 'monthly') {
+      const n = parseISO(rep.date).getDate();
+      const suffix = n % 10 === 1 && n !== 11 ? 'st' : n % 10 === 2 && n !== 12 ? 'nd' : n % 10 === 3 && n !== 13 ? 'rd' : 'th';
+      return `Every month on the ${n}${suffix} at ${time}`;
+    }
+    return `${formatDateShort(rep.date)} at ${time}`;
+  },
+  reminderPeopleText(r, userId) {
+    const ids = r.remindIds || [];
+    if (ids.length === 1 && ids[0] === userId) return '';
+    return 'For ' + ids.map(id => (id === userId ? 'you' : ((Store.getAccount(id) || {}).name || '?'))).join(', ');
+  },
+  // Today's reminders for me (ones I'm reminded by, or made for someone
+  // else), at the top of the To-do tab with a Got it button each.
+  renderRemindersStrip(list, userId) {
+    const all = Store.getReminders();
+    if (!all.length) return;
+    const today = formatISO(new Date());
+    const todays = all
+      .filter(r => reminderOccursOn(r, today))
+      .sort((a, b) => (a.time || '').localeCompare(b.time || ''));
+    const strip = document.createElement('div');
+    strip.className = 'reminders-strip';
+    strip.innerHTML = `
+      <div class="reminders-strip-head">
+        <span>Today's reminders</span>
+        <button type="button" class="link-btn" data-all>All reminders</button>
+      </div>
+      ${todays.length ? '' : '<p class="reminders-empty">Nothing today.</p>'}
+    `;
+    todays.forEach(r => {
+      const st = r.state && r.state.occDate === today ? r.state : null;
+      const row = document.createElement('div');
+      row.className = 'reminder-row' + (st && st.doneBy ? ' done' : '');
+      const who = this.reminderPeopleText(r, userId);
+      const doneText = st && st.doneBy
+        ? `${st.doneBy === userId ? 'You' : ((Store.getAccount(st.doneBy) || {}).name || 'Someone')}, ${new Date(st.doneAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`
+        : '';
+      row.innerHTML = `
+        <button type="button" class="reminder-row-main" data-edit>
+          <span class="reminder-row-time">${r.time ? formatTime12(r.time) : ''}</span>
+          <span class="reminder-row-text">
+            <span class="reminder-row-title">${escapeHTML(r.title || 'Reminder')}</span>
+            ${r.note || who ? `<span class="reminder-row-sub">${escapeHTML([r.note, who].filter(Boolean).join(' · '))}</span>` : ''}
+          </span>
+        </button>
+        ${st && st.doneBy
+          ? `<span class="reminder-done">${icon('check')}<span>${escapeHTML(doneText)}</span></span>`
+          : `<button type="button" class="btn btn-primary reminder-got-it" data-got>Got it</button>`}
+      `;
+      row.querySelector('[data-edit]').addEventListener('click', () => this.openReminderModal(r));
+      const got = row.querySelector('[data-got]');
+      if (got) got.addEventListener('click', () => { Store.gotItReminder(r.id, today); this.render(); });
+      strip.appendChild(row);
+    });
+    strip.querySelector('[data-all]').addEventListener('click', () => this.openAllReminders());
+    list.appendChild(strip);
+  },
+  openAllReminders() {
+    const userId = Store.getCurrentUserId();
+    const today = formatISO(new Date());
+    const rems = Store.getReminders().slice().sort((a, b) => {
+      const pa = a.nextDueAt == null ? 1 : 0;
+      const pb = b.nextDueAt == null ? 1 : 0;
+      return pa - pb || (a.nextDueAt || 0) - (b.nextDueAt || 0) || (a.title || '').localeCompare(b.title || '');
+    });
+    openModal(`
+      <div class="modal-header"><h2>All reminders</h2><button class="modal-close" id="ar-close" aria-label="Close">${icon('x')}</button></div>
+      <div id="ar-list"></div>
+      <button class="btn btn-primary" id="ar-new" style="width:100%;margin-top:12px;">New reminder</button>
+    `, root => {
+      root.querySelector('#ar-close').addEventListener('click', closeModal);
+      root.querySelector('#ar-new').addEventListener('click', () => { closeModal(); this.openReminderModal(null, true); });
+      const listEl = root.querySelector('#ar-list');
+      if (!rems.length) listEl.innerHTML = '<p class="muted">No reminders yet.</p>';
+      rems.forEach(r => {
+        const past = r.nextDueAt == null && !reminderOccursOn(r, today);
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'reminder-all-row' + (past ? ' past' : '');
+        const who = this.reminderPeopleText(r, userId);
+        btn.innerHTML = `
+          <span class="reminder-row-title">${escapeHTML(r.title || 'Reminder')}</span>
+          <span class="reminder-row-sub">${escapeHTML(this.reminderScheduleText(r))}${past ? ' · Done' : ''}${who ? ' · ' + escapeHTML(who) : ''}</span>
+        `;
+        btn.addEventListener('click', () => { closeModal(); this.openReminderModal(r, true); });
+        listEl.appendChild(btn);
+      });
+    });
+  },
+  // New or existing reminder. fromAll: go back to All reminders on close.
+  openReminderModal(r, fromAll) {
+    const userId = Store.getCurrentUserId();
+    const canEdit = !r || Store.canEditReminder(r);
+    const today = formatISO(new Date());
+    // Who it can remind: you, your household, and your connections --
+    // the same people you can add events for.
+    const people = Store.getKnownPeople(userId).filter(p => p.id === userId || Store.canEditCalendarOf(p.id));
+    (r ? r.remindIds || [] : []).forEach(id => {
+      if (!people.some(p => p.id === id) && Store.getAccount(id)) people.push(Store.getAccount(id));
+    });
+    let timeVal = r ? r.time : '08:00';
+    let repeatType = r ? (r.repeat || {}).type || 'once' : 'once';
+    let dateVal = r ? (r.repeat || {}).date || today : today;
+    let daysVal = r && r.repeat && r.repeat.days ? r.repeat.days.slice() : [parseISO(today).getDay()];
+    const remindIds = new Set(r ? r.remindIds || [] : [userId]);
+    const DAY_LETTERS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+    const back = () => { closeModal(); if (fromAll) this.openAllReminders(); };
+    const maker = r && r.createdBy !== userId ? ((Store.getAccount(r.createdBy) || {}).name || 'someone') : null;
+
+    openModal(`
+      <div class="modal-header"><h2>${r ? (canEdit ? 'Edit reminder' : 'Reminder') : 'New reminder'}</h2><button class="modal-close" id="rm-close" aria-label="Close">${icon('x')}</button></div>
+      ${canEdit ? '' : `<p class="muted" style="margin-top:0;">Only ${escapeHTML(maker)} can change this reminder.</p>`}
+      <div class="field"><input type="text" id="rm-title" placeholder="What to remember" autocomplete="off" value="${r ? escapeAttr(r.title || '') : ''}"></div>
+      <div class="field-row">
+        <div class="field"><button type="button" class="time-field-btn" id="rm-time">${icon('clock')}<span class="tf-text">${formatTime12(timeVal)}</span></button></div>
+        <div class="field">
+          <select id="rm-repeat">
+            <option value="once">Doesn't repeat</option>
+            <option value="daily">Every day</option>
+            <option value="weekly">Every week</option>
+            <option value="monthly">Every month</option>
+          </select>
+        </div>
+      </div>
+      <div class="field" id="rm-date-field">
+        <label id="rm-date-label">Date</label>
+        <button type="button" class="time-field-btn" id="rm-date">${icon('calendar')}<span class="tf-text">${formatDateShort(dateVal)}</span></button>
+      </div>
+      <div class="field hidden" id="rm-days-field">
+        <label>On</label>
+        <div class="rm-days">${DAY_LETTERS.map((l, i) => `<button type="button" class="rm-day" data-day="${i}" aria-label="${['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][i]}">${l}</button>`).join('')}</div>
+      </div>
+      <div class="field"><textarea id="rm-note" rows="2" placeholder="Note (optional), like &quot;Take with food&quot;">${r ? escapeHTML(r.note || '') : ''}</textarea></div>
+      <div class="field">
+        <label>Remind</label>
+        <div class="people-picker" id="rm-people" style="margin-top:4px;">
+          ${people.map(p => `<label><input type="checkbox" value="${p.id}" ${remindIds.has(p.id) ? 'checked' : ''}> ${escapeHTML(p.name)}${p.id === userId ? ' (you)' : ''}</label>`).join('')}
+        </div>
+        <p class="muted" style="margin:0;">Anyone reminded can tap Got it, and it counts for everyone.</p>
+      </div>
+      <p class="muted hidden" id="rm-error" style="color:var(--text-danger,#c0392b);"></p>
+      ${canEdit ? `<div class="btn-row">
+        ${r ? '<button class="btn btn-danger" id="rm-delete">Delete</button>' : ''}
+        <button class="btn btn-primary" id="rm-save">${r ? 'Save' : 'Add reminder'}</button>
+      </div>` : ''}
+    `, root => {
+      root.querySelector('#rm-close').addEventListener('click', back);
+      const repeatSel = root.querySelector('#rm-repeat');
+      repeatSel.value = repeatType;
+      const errorEl = root.querySelector('#rm-error');
+      const showError = msg => { errorEl.textContent = msg; errorEl.classList.remove('hidden'); };
+      const refreshRepeat = () => {
+        root.querySelector('#rm-days-field').classList.toggle('hidden', repeatType !== 'weekly');
+        root.querySelector('#rm-date-label').textContent = repeatType === 'once' ? 'Date'
+          : repeatType === 'monthly' ? 'Starting (repeats on this day each month)' : 'Starting';
+        root.querySelectorAll('.rm-day').forEach(b => b.classList.toggle('selected', daysVal.includes(Number(b.dataset.day))));
+      };
+      refreshRepeat();
+      if (!canEdit) {
+        root.querySelectorAll('input, select, textarea, #rm-time, #rm-date, .rm-day').forEach(el => { el.disabled = true; });
+        return;
+      }
+      repeatSel.addEventListener('change', () => { repeatType = repeatSel.value; refreshRepeat(); });
+      root.querySelectorAll('.rm-day').forEach(b => b.addEventListener('click', () => {
+        const d = Number(b.dataset.day);
+        daysVal = daysVal.includes(d) ? daysVal.filter(x => x !== d) : [...daysVal, d];
+        errorEl.classList.add('hidden');
+        refreshRepeat();
+      }));
+      root.querySelector('#rm-time').addEventListener('click', () => {
+        openTimePicker(timeVal, null, val => {
+          if (!val) return;
+          timeVal = val;
+          root.querySelector('#rm-time .tf-text').textContent = formatTime12(val);
+        });
+      });
+      root.querySelector('#rm-date').addEventListener('click', () => {
+        openDatePicker(dateVal, null, start => {
+          dateVal = start;
+          root.querySelector('#rm-date .tf-text').textContent = formatDateShort(start);
+        }, { single: true });
+      });
+      root.querySelector('#rm-title').addEventListener('input', () => errorEl.classList.add('hidden'));
+      root.querySelectorAll('#rm-people input').forEach(cb => cb.addEventListener('change', () => errorEl.classList.add('hidden')));
+      root.querySelector('#rm-save').addEventListener('click', () => {
+        const title = root.querySelector('#rm-title').value.trim();
+        const ids = Array.from(root.querySelectorAll('#rm-people input:checked')).map(cb => cb.value);
+        if (!title) { showError('Add what to remember first.'); return; }
+        if (!ids.length) { showError('Pick at least one person to remind.'); return; }
+        if (repeatType === 'weekly' && !daysVal.length) { showError('Pick at least one day of the week.'); return; }
+        if (repeatType === 'once' && new Date(`${dateVal}T${timeVal}:00`).getTime() <= Date.now()) {
+          showError('That time has already passed. Pick a later date or time.');
+          return;
+        }
+        const data = {
+          title,
+          time: timeVal,
+          note: root.querySelector('#rm-note').value.trim() || null,
+          repeat: { type: repeatType, date: dateVal, ...(repeatType === 'weekly' ? { days: daysVal.slice().sort() } : {}) },
+          remindIds: ids,
+        };
+        if (r) Store.updateReminder(r.id, data);
+        else Store.addReminder(data);
+        back();
+        this.render();
+      });
+      const del = root.querySelector('#rm-delete');
+      if (del) del.addEventListener('click', () => {
+        if (!confirm(`Delete "${r.title}"? It will stop reminding everyone.`)) return;
+        Store.deleteReminder(r.id);
+        back();
+        this.render();
+      });
+    });
+  },
+
   // The FAB on the To-do tab offers a choice before opening the real create
   // form, since a to-do list (checklist) and a note (free text) need
   // different content but share the same title/background/sharing setup.
@@ -924,11 +1152,13 @@ const Todo = {
         <button type="button" class="btn" id="ntc-note" style="flex:1;">Note</button>
         <button type="button" class="btn" id="ntc-other" style="flex:1;">Other</button>
       </div>
+      <button type="button" class="btn" id="ntc-reminder" style="width:100%;margin-top:10px;display:flex;align-items:center;justify-content:center;gap:6px;">${icon('bell')}<span>Reminder</span></button>
     `, root => {
       root.querySelector('#ntc-close').addEventListener('click', closeModal);
       root.querySelector('#ntc-checklist').addEventListener('click', () => { closeModal(); Todo.openNoteModal(null, 'checklist'); });
       root.querySelector('#ntc-note').addEventListener('click', () => { closeModal(); Todo.openNoteModal(null, 'note'); });
       root.querySelector('#ntc-other').addEventListener('click', () => { closeModal(); Todo.openOtherTypeMenu(); });
+      root.querySelector('#ntc-reminder').addEventListener('click', () => { closeModal(); Todo.openReminderModal(null); });
     });
   },
 

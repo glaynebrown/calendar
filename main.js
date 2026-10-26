@@ -414,7 +414,7 @@ const App = {
       root.querySelector('#ack-close').addEventListener('click', skip);
       root.querySelector('#modal-backdrop').addEventListener('click', e => { if (e.target.id === 'modal-backdrop') pending.forEach(p => this.skippedAcks.add(p.key + p.event.id)); });
       root.querySelector('#ack-got-it').addEventListener('click', () => {
-        pending.forEach(p => Store.ackReminder(p.event.id, p.key));
+        pending.forEach(p => (p.reminder ? Store.gotItReminder(p.reminder.id, p.occDate) : Store.ackReminder(p.event.id, p.key)));
         closeModal();
         Calendar.render();
       });

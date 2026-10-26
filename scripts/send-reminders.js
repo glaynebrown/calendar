@@ -112,6 +112,30 @@ function formatReminderBody(event, occDate, timeZone) {
 // Retries a few times on Firestore's transient errors (UNAVAILABLE,
 // DEADLINE_EXCEEDED, etc) so a brief blip on Google's side doesn't fail the
 // whole run and send a failure email.
+/* ---- Standalone reminders (To-do tab) -- copied from store.js's
+   reminderOccursOn/reminderNextDate. Keep in sync by hand. ---- */
+function reminderOccursOn(r, dateStr) {
+  const rep = r.repeat || {};
+  if (!rep.date || dateStr < rep.date) return false;
+  if (rep.type === 'daily') return true;
+  if (rep.type === 'weekly') return (rep.days || []).includes(parseISO(dateStr).getDay());
+  if (rep.type === 'monthly') {
+    const d = parseISO(dateStr);
+    const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+    return d.getDate() === Math.min(parseISO(rep.date).getDate(), lastDay);
+  }
+  return dateStr === rep.date;
+}
+function reminderNextDate(r, afterStr) {
+  const d = parseISO(afterStr);
+  for (let i = 0; i < 400; i++) {
+    d.setDate(d.getDate() + 1);
+    const str = formatISO(d);
+    if (reminderOccursOn(r, str)) return str;
+  }
+  return null;
+}
+
 // Repeat reminders (see "Keep reminding me until I tap Got it" in Settings).
 const MAX_REPEATS = 6;                     // the first one plus 5 repeats, about 30 minutes
 const REPEAT_GAP_MS = 4.5 * 60 * 1000;     // runs come every ~5 minutes; a little under so none get skipped
@@ -337,7 +361,115 @@ async function main() {
     }
   }
 
-  console.log(`Done. ${eventsSnap.size} event(s) with reminders checked, ${sentCount} notification(s) sent, ${errorCount} skipped.`);
+  // ---- Standalone reminders. Only ones whose nextDueAt has come are read,
+  // so having lots of them never means lots of reads. Each one's `state`
+  // tracks today's occurrence: { occDate, n, first, last, alerted, doneBy,
+  // doneAt }. One Got it from anyone it reminds stops it for everyone. ----
+  const remSnap = await withRetry(() =>
+    db.collection('reminders').where('nextDueAt', '<=', now.getTime()).get());
+  let households = null;
+  const sharesHousehold = async (a, b) => {
+    if (!households) households = (await withRetry(() => db.collection('households').get())).docs.map(d => d.data().memberIds || []);
+    return households.some(ids => ids.includes(a) && ids.includes(b));
+  };
+  // Only people the maker could actually remind: themselves, their
+  // household, or their connections.
+  const mayRemind = async (makerId, uid) => {
+    if (uid === makerId || await sharesHousehold(makerId, uid)) return true;
+    return (await getViewerGrants()).some(g => (g.viewerId === makerId && g.ofUid === uid) || (g.viewerId === uid && g.ofUid === makerId));
+  };
+  for (const doc of remSnap.docs) {
+    try {
+      const r = doc.data();
+      const occ = r.nextOccDate;
+      const tz = r.timeZone || 'America/New_York';
+      const nowMs = now.getTime();
+      const advance = extra => {
+        const next = occ ? reminderNextDate(r, occ) : null;
+        return doc.ref.update({
+          nextOccDate: next,
+          nextDueAt: next ? zonedTimeToUtc(next, r.time, tz).getTime() : null,
+          ...(extra || {}),
+        });
+      };
+      if (!occ) { await doc.ref.update({ nextDueAt: null }); continue; }
+      const st = r.state && r.state.occDate === occ ? r.state : null;
+      // Already Got it (even before it went off), or the run is hours late.
+      if (st && st.doneBy) { await advance(); continue; }
+      const occAt = zonedTimeToUtc(occ, r.time, tz).getTime();
+      if (!st && nowMs - occAt > 180 * 60 * 1000) { await advance(); continue; }
+
+      const recipients = [];
+      for (const uid of r.remindIds || []) {
+        if (!(await mayRemind(r.createdBy, uid))) continue;
+        const acct = await getAccount(uid);
+        if (acct) recipients.push({ uid, acct });
+      }
+      const nag = recipients.filter(p => p.acct.nagReminders);
+      const title = r.title || 'Reminder';
+      const bodyFor = (p, repeat) => {
+        const base = formatReminderBody({ time: r.time }, occ, p.acct.timezone || tz);
+        return [base, r.note].filter(Boolean).join(' · ') + (repeat ? ' (tap to open, then Got it)' : '');
+      };
+
+      if (!st) {
+        for (const p of recipients) if (await sendTo(p.acct, p.uid, title, bodyFor(p, false))) sentCount++;
+        const fresh = { occDate: occ, n: 1, first: nowMs, last: nowMs, alerted: false };
+        console.log(`Sent reminder "${title}" (${occ}) to ${recipients.length} person(s)`);
+        if (nag.length) await doc.ref.update({ state: fresh, nextDueAt: nowMs + REPEAT_GAP_MS });
+        else await advance({ state: fresh });
+        continue;
+      }
+
+      // Repeat phase -- field-level updates so a Got it tapped in the
+      // meantime is never overwritten.
+      const upd = {};
+      let n = st.n || 1;
+      let last = st.last || st.first;
+      let alerted = !!st.alerted;
+      if (nag.length && n < MAX_REPEATS && nowMs - last >= REPEAT_GAP_MS) {
+        for (const p of nag) if (await sendTo(p.acct, p.uid, title, bodyFor(p, true))) sentCount++;
+        n += 1; last = nowMs;
+        upd['state.n'] = n; upd['state.last'] = last;
+      }
+      const alertFor = nag.filter(p => p.acct.alertConnections);
+      if (alertFor.length && !alerted && nowMs - st.first >= ALERT_AFTER_MS) {
+        const grants = await getViewerGrants();
+        const reminded = new Set(recipients.map(p => p.uid));
+        const told = new Set();
+        for (const p of alertFor) {
+          grants.forEach(g => {
+            if (g.viewerId === p.uid) told.add(g.ofUid);
+            if (g.ofUid === p.uid) told.add(g.viewerId);
+          });
+        }
+        reminded.forEach(id => told.delete(id));
+        const names = alertFor.map(p => p.acct.name || 'Someone').join(' and ');
+        for (const helperId of told) {
+          const helper = await getAccount(helperId);
+          if (!helper) continue;
+          const body = `${title}, ${formatReminderBody({ time: r.time }, occ, helper.timezone || tz)}`;
+          if (await sendTo(helper, helperId, `${names} hasn't tapped Got it`, body)) sentCount++;
+        }
+        alerted = true;
+        upd['state.alerted'] = true;
+      }
+      const wake = [];
+      if (nag.length && n < MAX_REPEATS) wake.push(last + REPEAT_GAP_MS);
+      if (alertFor.length && !alerted) wake.push(st.first + ALERT_AFTER_MS);
+      if (wake.length) {
+        upd.nextDueAt = Math.min(...wake);
+        await doc.ref.update(upd);
+      } else {
+        await advance(upd);
+      }
+    } catch (err) {
+      errorCount++;
+      console.warn(`Skipped reminder ${doc.id}:`, err.message);
+    }
+  }
+
+  console.log(`Done. ${eventsSnap.size} event(s) with reminders checked, ${remSnap.size} reminder(s) due, ${sentCount} notification(s) sent, ${errorCount} skipped.`);
 }
 
 main().then(() => process.exit(0)).catch(err => {

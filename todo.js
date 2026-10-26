@@ -1132,7 +1132,7 @@ const Todo = {
           dateVal = start;
           root.querySelector('#rm-date .tf-text').textContent = formatDateShort(start);
           refreshRepeat();
-        }, { single: true });
+        }, { single: true, withDone: true });
       });
       root.querySelector('#rm-title').addEventListener('input', () => errorEl.classList.add('hidden'));
       root.querySelectorAll('#rm-people input').forEach(cb => cb.addEventListener('change', () => errorEl.classList.add('hidden')));

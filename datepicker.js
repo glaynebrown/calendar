@@ -24,10 +24,14 @@ function formatDateNumeric(iso) {
 // Pass { single: true } for a plain one-date picker (no range, no Done —
 // tapping a date confirms and closes immediately), e.g. for a list of
 // independent custom dates rather than a start/through span.
+// Pass { single: true, withDone: true } for one date that's only
+// committed with Done, same look as the event date picker (reminders).
 function openDatePicker(startValue, endValue, onConfirm, opts) {
-  const single = !!(opts && opts.single);
+  const withDone = !!(opts && opts.withDone);
+  const single = !!(opts && opts.single) && !withDone;
+  const oneDate = single || withDone;
   let rangeStart = startValue || formatISO(new Date());
-  let rangeEnd = single ? null : (endValue && endValue > rangeStart ? endValue : null);
+  let rangeEnd = oneDate ? null : (endValue && endValue > rangeStart ? endValue : null);
   let phase = 'start'; // 'start': next tap sets a fresh start date. 'end': next tap extends through it.
 
   const start = parseISO(rangeStart);
@@ -61,7 +65,7 @@ function openDatePicker(startValue, endValue, onConfirm, opts) {
 
   function render() {
     monthLabel.textContent = new Date(viewYear, viewMonth, 1).toLocaleString('default', { month: 'long', year: 'numeric' });
-    hint.textContent = phase === 'start'
+    hint.textContent = withDone ? 'Tap a date, then Done' : phase === 'start'
       ? 'Tap a date'
       : (rangeEnd ? 'Tap Done to confirm, or tap a date to change the range' : 'Tap another date to extend through it, or tap Done');
     grid.innerHTML = '';
@@ -80,6 +84,11 @@ function openDatePicker(startValue, endValue, onConfirm, opts) {
         if (single) {
           onConfirm(ds, null);
           overlay.remove();
+          return;
+        }
+        if (withDone) {
+          rangeStart = ds;
+          render();
           return;
         }
         if (phase === 'start') {

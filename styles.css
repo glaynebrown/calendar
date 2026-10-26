@@ -1066,3 +1066,17 @@ input[type="color"]::-moz-color-swatch { border: none; border-radius: inherit; }
 .rm-day { flex: 1; aspect-ratio: 1; max-width: 40px; border-radius: 50%; border: 0.5px solid var(--border-strong); background: var(--surface-2); color: var(--text); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
 .rm-day.selected { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
 #rm-note { width: 100%; }
+
+/* Tall fixed-height sheets (reminder form, All reminders) -- same size
+   every time, content scrolls inside */
+.modal-sheet.tall-sheet { height: 85vh; max-height: 85vh; }
+.modal-sheet.ar-sheet { display: flex; flex-direction: column; overflow: hidden; }
+.ar-list { flex: 1; min-height: 0; overflow-y: auto; }
+/* Small choice pop-ups (the To-do + menu) sit in the middle of the screen */
+.modal-backdrop.modal-center { align-items: center; padding: 16px; }
+.modal-backdrop.modal-center .modal-sheet { border-radius: 18px; max-width: 420px; padding-bottom: 18px; }
+.reminders-strip-actions { display: flex; align-items: center; gap: 6px; }
+.reminders-add { padding: 4px; color: var(--accent); }
+.reminders-add svg { width: 18px; height: 18px; }
+.rm-remind-line { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 14px; }
+.rm-remind-line strong { font-weight: 600; }

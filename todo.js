@@ -940,7 +940,6 @@ const Todo = {
   // else), at the top of the To-do tab with a Got it button each.
   renderRemindersStrip(list, userId) {
     const all = Store.getReminders();
-    if (!all.length) return;
     const today = formatISO(new Date());
     const todays = all
       .filter(r => reminderOccursOn(r, today))
@@ -950,9 +949,12 @@ const Todo = {
     strip.innerHTML = `
       <div class="reminders-strip-head">
         <span>Today's reminders</span>
-        <button type="button" class="link-btn" data-all>All reminders</button>
+        <span class="reminders-strip-actions">
+          ${all.length ? '<button type="button" class="link-btn" data-all>All reminders</button>' : ''}
+          <button type="button" class="icon-btn reminders-add" data-add aria-label="New reminder">${icon('plus')}</button>
+        </span>
       </div>
-      ${todays.length ? '' : '<p class="reminders-empty">Nothing today.</p>'}
+      ${todays.length ? '' : `<p class="reminders-empty">${all.length ? 'Nothing today.' : 'No reminders yet.'}</p>`}
     `;
     todays.forEach(r => {
       const st = r.state && r.state.occDate === today ? r.state : null;
@@ -979,7 +981,9 @@ const Todo = {
       if (got) got.addEventListener('click', () => { Store.gotItReminder(r.id, today); this.render(); });
       strip.appendChild(row);
     });
-    strip.querySelector('[data-all]').addEventListener('click', () => this.openAllReminders());
+    const allBtn = strip.querySelector('[data-all]');
+    if (allBtn) allBtn.addEventListener('click', () => this.openAllReminders());
+    strip.querySelector('[data-add]').addEventListener('click', () => this.openReminderModal(null));
     list.appendChild(strip);
   },
   openAllReminders() {
@@ -992,9 +996,10 @@ const Todo = {
     });
     openModal(`
       <div class="modal-header"><h2>All reminders</h2><button class="modal-close" id="ar-close" aria-label="Close">${icon('x')}</button></div>
-      <div id="ar-list"></div>
-      <button class="btn btn-primary" id="ar-new" style="width:100%;margin-top:12px;">New reminder</button>
+      <div id="ar-list" class="ar-list"></div>
+      <button class="btn btn-primary" id="ar-new" style="width:100%;margin-top:12px;flex-shrink:0;">New reminder</button>
     `, root => {
+      root.querySelector('.modal-sheet').classList.add('tall-sheet', 'ar-sheet');
       root.querySelector('#ar-close').addEventListener('click', closeModal);
       root.querySelector('#ar-new').addEventListener('click', () => { closeModal(); this.openReminderModal(null, true); });
       const listEl = root.querySelector('#ar-list');
@@ -1039,31 +1044,33 @@ const Todo = {
       ${canEdit ? '' : `<p class="muted" style="margin-top:0;">Only ${escapeHTML(maker)} can change this reminder.</p>`}
       <div class="field"><input type="text" id="rm-title" placeholder="What to remember" autocomplete="off" value="${r ? escapeAttr(r.title || '') : ''}"></div>
       <div class="field-row">
+        <div class="field"><button type="button" class="time-field-btn" id="rm-date">${icon('calendar')}<span class="tf-text">${formatDateShort(dateVal)}</span></button></div>
         <div class="field"><button type="button" class="time-field-btn" id="rm-time">${icon('clock')}<span class="tf-text">${formatTime12(timeVal)}</span></button></div>
-        <div class="field">
-          <select id="rm-repeat">
-            <option value="once">Doesn't repeat</option>
-            <option value="daily">Every day</option>
-            <option value="weekly">Every week</option>
-            <option value="monthly">Every month</option>
-          </select>
-        </div>
       </div>
-      <div class="field" id="rm-date-field">
-        <label id="rm-date-label">Date</label>
-        <button type="button" class="time-field-btn" id="rm-date">${icon('calendar')}<span class="tf-text">${formatDateShort(dateVal)}</span></button>
+      <div class="field">
+        <select id="rm-repeat">
+          <option value="once">Doesn't repeat</option>
+          <option value="daily">Every day</option>
+          <option value="weekly">Every week</option>
+          <option value="monthly">Every month</option>
+        </select>
+        <p class="muted hidden" id="rm-date-label" style="margin:6px 0 0;"></p>
       </div>
       <div class="field hidden" id="rm-days-field">
-        <label>On</label>
         <div class="rm-days">${DAY_LETTERS.map((l, i) => `<button type="button" class="rm-day" data-day="${i}" aria-label="${['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][i]}">${l}</button>`).join('')}</div>
       </div>
-      <div class="field"><textarea id="rm-note" rows="2" placeholder="Note (optional), like &quot;Take with food&quot;">${r ? escapeHTML(r.note || '') : ''}</textarea></div>
+      <div class="field"><textarea id="rm-note" rows="2" placeholder="Note (optional)">${r ? escapeHTML(r.note || '') : ''}</textarea></div>
       <div class="field">
-        <label>Remind</label>
-        <div class="people-picker" id="rm-people" style="margin-top:4px;">
-          ${people.map(p => `<label><input type="checkbox" value="${p.id}" ${remindIds.has(p.id) ? 'checked' : ''}> ${escapeHTML(p.name)}${p.id === userId ? ' (you)' : ''}</label>`).join('')}
+        <div class="rm-remind-line">
+          <span>Remind: <strong id="rm-remind-summary"></strong></span>
+          <button type="button" class="link-btn" id="rm-choose">Choose people</button>
         </div>
-        <p class="muted" style="margin:0;">Anyone reminded can tap Got it, and it counts for everyone.</p>
+        <div id="rm-people-wrap" class="hidden">
+          <div class="people-picker" id="rm-people" style="margin-top:8px;">
+            ${people.map(p => `<label><input type="checkbox" value="${p.id}" ${remindIds.has(p.id) ? 'checked' : ''}> ${escapeHTML(p.name)}${p.id === userId ? ' (you)' : ''}</label>`).join('')}
+          </div>
+          <p class="muted" style="margin:0;">Anyone reminded can tap Got it, and it counts for everyone.</p>
+        </div>
       </div>
       <p class="muted hidden" id="rm-error" style="color:var(--text-danger,#c0392b);"></p>
       ${canEdit ? `<div class="btn-row">
@@ -1071,20 +1078,39 @@ const Todo = {
         <button class="btn btn-primary" id="rm-save">${r ? 'Save' : 'Add reminder'}</button>
       </div>` : ''}
     `, root => {
+      root.querySelector('.modal-sheet').classList.add('tall-sheet');
       root.querySelector('#rm-close').addEventListener('click', back);
+      // Just you by default; "Choose people" opens the list (already open
+      // when it reminds someone else).
+      const peopleWrap = root.querySelector('#rm-people-wrap');
+      const chooseBtn = root.querySelector('#rm-choose');
+      const refreshRemindSummary = () => {
+        const ids = Array.from(root.querySelectorAll('#rm-people input:checked')).map(cb => cb.value);
+        root.querySelector('#rm-remind-summary').textContent = ids.length
+          ? ids.map(id => (id === userId ? 'You' : ((Store.getAccount(id) || {}).name || '?'))).join(', ')
+          : 'Nobody yet';
+      };
+      const openPeople = () => { peopleWrap.classList.remove('hidden'); chooseBtn.classList.add('hidden'); };
+      if ([...remindIds].some(id => id !== userId)) openPeople();
+      chooseBtn.addEventListener('click', openPeople);
+      root.querySelectorAll('#rm-people input').forEach(cb => cb.addEventListener('change', refreshRemindSummary));
+      refreshRemindSummary();
       const repeatSel = root.querySelector('#rm-repeat');
       repeatSel.value = repeatType;
       const errorEl = root.querySelector('#rm-error');
       const showError = msg => { errorEl.textContent = msg; errorEl.classList.remove('hidden'); };
       const refreshRepeat = () => {
         root.querySelector('#rm-days-field').classList.toggle('hidden', repeatType !== 'weekly');
-        root.querySelector('#rm-date-label').textContent = repeatType === 'once' ? 'Date'
-          : repeatType === 'monthly' ? 'Starting (repeats on this day each month)' : 'Starting';
+        const hint = root.querySelector('#rm-date-label');
+        hint.textContent = repeatType === 'monthly' ? `On the same day each month, starting ${formatDateShort(dateVal)}`
+          : repeatType === 'once' ? '' : `Starting ${formatDateShort(dateVal)}`;
+        hint.classList.toggle('hidden', !hint.textContent);
         root.querySelectorAll('.rm-day').forEach(b => b.classList.toggle('selected', daysVal.includes(Number(b.dataset.day))));
       };
       refreshRepeat();
       if (!canEdit) {
         root.querySelectorAll('input, select, textarea, #rm-time, #rm-date, .rm-day').forEach(el => { el.disabled = true; });
+        chooseBtn.classList.add('hidden');
         return;
       }
       repeatSel.addEventListener('change', () => { repeatType = repeatSel.value; refreshRepeat(); });
@@ -1105,6 +1131,7 @@ const Todo = {
         openDatePicker(dateVal, null, start => {
           dateVal = start;
           root.querySelector('#rm-date .tf-text').textContent = formatDateShort(start);
+          refreshRepeat();
         }, { single: true });
       });
       root.querySelector('#rm-title').addEventListener('input', () => errorEl.classList.add('hidden'));
@@ -1154,6 +1181,7 @@ const Todo = {
       </div>
       <button type="button" class="btn" id="ntc-reminder" style="width:100%;margin-top:10px;display:flex;align-items:center;justify-content:center;gap:6px;">${icon('bell')}<span>Reminder</span></button>
     `, root => {
+      root.querySelector('#modal-backdrop').classList.add('modal-center');
       root.querySelector('#ntc-close').addEventListener('click', closeModal);
       root.querySelector('#ntc-checklist').addEventListener('click', () => { closeModal(); Todo.openNoteModal(null, 'checklist'); });
       root.querySelector('#ntc-note').addEventListener('click', () => { closeModal(); Todo.openNoteModal(null, 'note'); });
@@ -1167,6 +1195,7 @@ const Todo = {
       <div class="modal-header"><h2>New</h2><button class="modal-close" id="nto-close">${icon('x')}</button></div>
       <div id="nto-list"></div>
     `, root => {
+      root.querySelector('#modal-backdrop').classList.add('modal-center');
       root.querySelector('#nto-close').addEventListener('click', closeModal);
       const list = root.querySelector('#nto-list');
       NOTE_OTHER_TYPES.forEach(opt => {

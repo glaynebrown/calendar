@@ -344,8 +344,6 @@ const Settings = {
             <span class="st-row-label">Holidays</span>
             <span class="st-chev">${icon('chevron-right')}</span>
           </button>
-        </div>
-        <div class="st-group">
           ${navRow('appearance', 'palette', 'Appearance')}
           <label class="st-row st-row-switch" id="st-notif-row">
             <span class="st-row-icon">${icon('bell')}</span>
@@ -618,7 +616,7 @@ const Settings = {
           && firebase.messaging.isSupported && await firebase.messaging.isSupported();
         if (!supported) {
           notifToggle.disabled = true;
-          setNotifStatus('On iPhone, add this app to your Home Screen first (Share → Add to Home Screen), then turn this on from there.');
+          setNotifStatus('On iPhone, add this app to your Home Screen first (Share → Add to Home Screen), then turn this on to allow notifications.');
         } else if (Notification.permission === 'denied') {
           notifToggle.disabled = true;
           setNotifStatus("Blocked in your phone's settings. Allow notifications for this app there, then reopen Settings.");

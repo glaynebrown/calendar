@@ -89,12 +89,24 @@ function zonedTimeToUtc(dateStr, timeStr, timeZone) {
   return new Date(utcGuess - offset);
 }
 
-function formatReminderBody(event, occDate) {
-  if (!event.time) return `Today, ${occDate}`;
+// "Today" / "Tomorrow" / "Thu, Oct 30", plus the time for timed events --
+// worked out from the day it is for the RECIPIENT right now (in their own
+// timezone), not the event's date alone, so a reminder set a day ahead
+// says "Tomorrow".
+function formatReminderBody(event, occDate, timeZone) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date()).map(p => [p.type, p.value]));
+  const todayStr = `${parts.year}-${parts.month}-${parts.day}`;
+  const dayDiff = Math.round((Date.parse(`${occDate}T00:00:00Z`) - Date.parse(`${todayStr}T00:00:00Z`)) / 86400000);
+  const day = dayDiff === 0 ? 'Today'
+    : dayDiff === 1 ? 'Tomorrow'
+    : new Date(`${occDate}T12:00:00Z`).toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'short', month: 'short', day: 'numeric' });
+  if (!event.time) return day;
   const [hh, mm] = event.time.split(':').map(Number);
   const period = hh >= 12 ? 'PM' : 'AM';
   const h12 = hh % 12 || 12;
-  return `${occDate} at ${h12}:${pad2(mm)} ${period}`;
+  return `${day} at ${h12}:${pad2(mm)} ${period}`;
 }
 
 // Retries a few times on Firestore's transient errors (UNAVAILABLE,
@@ -206,7 +218,7 @@ async function main() {
           const tokens = (recipient && recipient.deviceTokens) || [];
           if (tokens.length > 0) {
             const title = event.title || 'Reminder';
-            const body = formatReminderBody(event, occDate);
+            const body = formatReminderBody(event, occDate, (recipient && recipient.timezone) || timezone);
             await Promise.all(tokens.map(token =>
               messaging.send({ token, notification: { title, body } }).catch(err => {
                 console.warn(`Failed to send to a token for ${uid}:`, err.message);

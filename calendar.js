@@ -3080,7 +3080,7 @@ const Calendar = {
     const resolvedColor = b => Store.birthdayColorFor(userId, b.id) || b.color || Store.getDefaultBirthdayColor(userId) || HOLIDAY_COLOR;
 
     const body = `
-      <div class="modal-header"><h2>Birthdays</h2><button class="modal-close" id="bd-close">${icon('x')}</button></div>
+      <div class="modal-header st-page-header"><button type="button" class="st-back" id="bd-close-back" aria-label="Back">${icon('chevron-left')}<span>Settings</span></button><h2>Birthdays</h2><button class="modal-close" id="bd-close" aria-label="Close">${icon('x')}</button></div>
       <p class="muted">Private to you unless you turn "Shared" on -- that opens it up to everyone across all of your households. The color swatch on every row is always just your own, regardless of who added the birthday.</p>
       <div class="field-row" style="align-items:center; margin-bottom:14px;">
         <input type="color" id="bd-default-color" class="color-box" value="${Store.getDefaultBirthdayColor(userId) || HOLIDAY_COLOR}">
@@ -3100,7 +3100,8 @@ const Calendar = {
       <div id="bd-shared-section"></div>
     `;
     openModal(body, root => {
-      root.querySelector('#bd-close').addEventListener('click', () => { closeModal(); Settings.openModal(); });
+      root.querySelector('#bd-close').addEventListener('click', closeModal);
+      root.querySelector('#bd-close-back').addEventListener('click', () => { closeModal(); Settings.openModal(); });
       const listEl = root.querySelector('#bd-list');
       const sharedSectionEl = root.querySelector('#bd-shared-section');
       const formWrap = root.querySelector('#bd-form-wrap');
@@ -3299,7 +3300,7 @@ const Calendar = {
   openHolidaysManager() {
     const userId = Store.getCurrentUserId();
     const body = `
-      <div class="modal-header"><h2>Holidays</h2><button class="modal-close" id="hol-close">${icon('x')}</button></div>
+      <div class="modal-header st-page-header"><button type="button" class="st-back" id="hol-close-back" aria-label="Back">${icon('chevron-left')}<span>Settings</span></button><h2>Holidays</h2><button class="modal-close" id="hol-close" aria-label="Close">${icon('x')}</button></div>
       <p class="muted">Choose which holidays show up on your calendar -- private to you, unless you tap one and add participants.</p>
       <div class="field-row" style="align-items:center; margin-bottom:14px;">
         <input type="color" id="hol-color" class="color-box" value="${Store.getHolidayColor(userId) || HOLIDAY_COLOR}">
@@ -3308,7 +3309,8 @@ const Calendar = {
       <div id="hol-list"></div>
     `;
     openModal(body, root => {
-      root.querySelector('#hol-close').addEventListener('click', () => { closeModal(); Settings.openModal(); });
+      root.querySelector('#hol-close').addEventListener('click', closeModal);
+      root.querySelector('#hol-close-back').addEventListener('click', () => { closeModal(); Settings.openModal(); });
       root.querySelector('#hol-color').addEventListener('input', e => {
         Store.saveHolidayColor(userId, e.target.value);
         Calendar.render();
